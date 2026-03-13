@@ -122,6 +122,57 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("watchlist", () => {
+    it("fetches watchlist", async () => {
+      api.setToken("test-token");
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { id: "w1", symbol: "AAPL", asset_type: "stock", price: 175, change: 2, change_pct: 1.15, name: "Apple" },
+        ],
+      });
+
+      const result = await api.getWatchlist();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/watchlist/"),
+        expect.any(Object)
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].symbol).toBe("AAPL");
+    });
+
+    it("adds to watchlist", async () => {
+      api.setToken("test-token");
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "w2", symbol: "BTC", asset_type: "crypto" }),
+      });
+
+      const result = await api.addToWatchlist("BTC", "crypto");
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.symbol).toBe("BTC");
+      expect(body.asset_type).toBe("crypto");
+      expect(result.symbol).toBe("BTC");
+    });
+
+    it("removes from watchlist", async () => {
+      api.setToken("test-token");
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ message: "AAPL removed from watchlist" }),
+      });
+
+      await api.removeFromWatchlist("AAPL");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/watchlist/AAPL"),
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+  });
+
   describe("getQuote", () => {
     it("constructs correct URL", async () => {
       mockFetch.mockResolvedValueOnce({

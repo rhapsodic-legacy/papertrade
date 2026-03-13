@@ -82,22 +82,48 @@ async def get_transaction_history(request: Request, limit: int = 50):
 @router.get("/leaderboard")
 async def get_leaderboard(limit: int = 20):
     db = get_supabase_admin()
-    resp = (
-        db.table("leaderboard")
-        .select("*")
-        .limit(limit)
-        .execute()
-    )
 
+    # Get all profiles
+    profiles_resp = db.table("profiles").select("*").execute()
+
+    # Get all open positions
+    positions_resp = db.table("positions").select("*").gt("quantity", 0).execute()
+
+    # Group positions by user
+    positions_by_user: dict[str, list] = {}
+    for pos in positions_resp.data:
+        positions_by_user.setdefault(pos["user_id"], []).append(pos)
+
+    # Fetch live prices for all unique symbols (cache makes this fast)
+    symbols_seen: dict[str, float] = {}
+    for pos in positions_resp.data:
+        key = f"{pos['asset_type']}:{pos['symbol']}"
+        if key not in symbols_seen:
+            quote = await get_quote(pos["symbol"], pos["asset_type"])
+            symbols_seen[key] = quote["price"] if quote else float(pos["avg_cost_basis"])
+
+    # Calculate live portfolio values
     entries = []
-    for i, row in enumerate(resp.data, 1):
+    for profile in profiles_resp.data:
+        cash = float(profile["cash_balance"])
+        invested = 0.0
+        for pos in positions_by_user.get(profile["id"], []):
+            key = f"{pos['asset_type']}:{pos['symbol']}"
+            price = symbols_seen.get(key, float(pos["avg_cost_basis"]))
+            invested += float(pos["quantity"]) * price
+
         entries.append(
             {
-                "rank": i,
-                "display_name": row["display_name"],
-                "total_portfolio_value": float(row["total_portfolio_value"]),
-                "cash_balance": float(row["cash_balance"]),
-                "invested_value": float(row["invested_value"]),
+                "display_name": profile["display_name"],
+                "total_portfolio_value": round(cash + invested, 2),
+                "cash_balance": round(cash, 2),
+                "invested_value": round(invested, 2),
             }
         )
-    return entries
+
+    # Sort by total value descending, add ranks
+    entries.sort(key=lambda e: e["total_portfolio_value"], reverse=True)
+    for i, entry in enumerate(entries[:limit], 1):
+        entry["rank"] = i
+
+    return entries[:limit]

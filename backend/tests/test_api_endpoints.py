@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock  # noqa: F401
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -155,3 +155,116 @@ class TestPortfolioEndpoints:
     def test_history_requires_auth(self):
         resp = client.get("/api/portfolio/history")
         assert resp.status_code == 401
+
+
+class TestWatchlistEndpoints:
+    def test_watchlist_requires_auth(self):
+        resp = client.get("/api/watchlist/")
+        assert resp.status_code == 401
+
+    def test_add_to_watchlist_requires_auth(self):
+        resp = client.post(
+            "/api/watchlist/",
+            json={"symbol": "AAPL", "asset_type": "stock"},
+        )
+        assert resp.status_code == 401
+
+    def test_delete_from_watchlist_requires_auth(self):
+        resp = client.delete("/api/watchlist/AAPL")
+        assert resp.status_code == 401
+
+    def test_add_unsupported_stock(self):
+        with patch("app.routers.watchlist.get_user_id_from_token", return_value="user-1"):
+            resp = client.post(
+                "/api/watchlist/",
+                json={"symbol": "FAKESYMBOL", "asset_type": "stock"},
+                headers={"Authorization": "Bearer fake-token"},
+            )
+        assert resp.status_code == 400
+
+    def test_add_unsupported_crypto(self):
+        with patch("app.routers.watchlist.get_user_id_from_token", return_value="user-1"):
+            resp = client.post(
+                "/api/watchlist/",
+                json={"symbol": "FAKECOIN", "asset_type": "crypto"},
+                headers={"Authorization": "Bearer fake-token"},
+            )
+        assert resp.status_code == 400
+
+    def test_add_duplicate_to_watchlist(self):
+        mock_db = MagicMock()
+        select_query = MagicMock()
+        select_query.select.return_value = select_query
+        select_query.eq.return_value = select_query
+        result = MagicMock()
+        result.data = [{"id": "existing-1"}]
+        select_query.execute.return_value = result
+        mock_db.table.return_value = select_query
+
+        with (
+            patch("app.routers.watchlist.get_user_id_from_token", return_value="user-1"),
+            patch("app.routers.watchlist.get_supabase_admin", return_value=mock_db),
+        ):
+            resp = client.post(
+                "/api/watchlist/",
+                json={"symbol": "AAPL", "asset_type": "stock"},
+                headers={"Authorization": "Bearer fake-token"},
+            )
+        assert resp.status_code == 409
+
+    def test_get_watchlist_success(self):
+        mock_db = MagicMock()
+        query = MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        result = MagicMock()
+        result.data = [
+            {"id": "w1", "symbol": "AAPL", "asset_type": "stock", "created_at": "2026-03-11"},
+        ]
+        query.execute.return_value = result
+        mock_db.table.return_value = query
+
+        mock_quote = {
+            "symbol": "AAPL",
+            "asset_type": "stock",
+            "price": 175.0,
+            "change": 2.0,
+            "change_pct": 1.15,
+            "name": "Apple",
+        }
+
+        with (
+            patch("app.routers.watchlist.get_user_id_from_token", return_value="user-1"),
+            patch("app.routers.watchlist.get_supabase_admin", return_value=mock_db),
+            patch("app.routers.watchlist.get_quote", new_callable=AsyncMock, return_value=mock_quote),
+        ):
+            resp = client.get(
+                "/api/watchlist/",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["symbol"] == "AAPL"
+        assert data[0]["price"] == 175.0
+
+    def test_remove_from_watchlist_not_found(self):
+        mock_db = MagicMock()
+        query = MagicMock()
+        query.delete.return_value = query
+        query.eq.return_value = query
+        result = MagicMock()
+        result.data = []
+        query.execute.return_value = result
+        mock_db.table.return_value = query
+
+        with (
+            patch("app.routers.watchlist.get_user_id_from_token", return_value="user-1"),
+            patch("app.routers.watchlist.get_supabase_admin", return_value=mock_db),
+        ):
+            resp = client.delete(
+                "/api/watchlist/AAPL",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+        assert resp.status_code == 404

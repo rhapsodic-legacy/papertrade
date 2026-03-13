@@ -164,6 +164,36 @@ class ApiClient {
       }),
     });
   }
+  // Watchlist
+  async getWatchlist() {
+    return this.request<
+      {
+        id: string;
+        symbol: string;
+        asset_type: string;
+        price: number | null;
+        change: number | null;
+        change_pct: number | null;
+        name: string;
+      }[]
+    >("/api/watchlist/");
+  }
+
+  async addToWatchlist(symbol: string, assetType: "stock" | "crypto") {
+    return this.request<{ id: string; symbol: string; asset_type: string }>(
+      "/api/watchlist/",
+      {
+        method: "POST",
+        body: JSON.stringify({ symbol, asset_type: assetType }),
+      }
+    );
+  }
+
+  async removeFromWatchlist(symbol: string) {
+    return this.request<{ message: string }>(`/api/watchlist/${symbol}`, {
+      method: "DELETE",
+    });
+  }
 }
 
 export const api = new ApiClient();

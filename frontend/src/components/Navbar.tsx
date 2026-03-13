@@ -36,6 +36,12 @@ export default function Navbar() {
                   History
                 </Link>
                 <Link
+                  href="/watchlist"
+                  className="text-gray-300 hover:text-white transition"
+                >
+                  Watchlist
+                </Link>
+                <Link
                   href="/leaderboard"
                   className="text-gray-300 hover:text-white transition"
                 >
