@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request
 
 from app.services.auth import get_user_id_from_token
 from app.services.market_data import get_quote
+from app.services.snapshots import take_all_snapshots
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
@@ -127,3 +128,27 @@ async def get_leaderboard(limit: int = 20):
         entry["rank"] = i
 
     return entries[:limit]
+
+
+@router.get("/snapshots")
+async def get_portfolio_snapshots(request: Request, days: int = 30):
+    user_id = get_user_id_from_token(request)
+    db = get_supabase_admin()
+
+    resp = (
+        db.table("portfolio_snapshots")
+        .select("snapshot_date, total_value, cash_balance, invested_value")
+        .eq("user_id", user_id)
+        .order("snapshot_date", desc=False)
+        .limit(days)
+        .execute()
+    )
+
+    return resp.data
+
+
+@router.post("/snapshots/trigger")
+async def trigger_snapshots():
+    """Take a snapshot of all users' portfolios. Call daily via cron."""
+    count = await take_all_snapshots()
+    return {"message": f"Snapshots created for {count} users"}

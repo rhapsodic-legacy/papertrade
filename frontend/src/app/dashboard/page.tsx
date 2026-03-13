@@ -4,8 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { formatCurrency, formatPrice, pnlColor } from "@/lib/utils";
+import { formatCurrency, formatPrice, formatDate, pnlColor } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
+
+interface Snapshot {
+  snapshot_date: string;
+  total_value: number;
+  cash_balance: number;
+  invested_value: number;
+}
 
 interface Position {
   symbol: string;
@@ -29,6 +36,7 @@ export default function DashboardPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,9 +47,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
-      api
-        .getPortfolio()
-        .then(setPortfolio)
+      Promise.all([api.getPortfolio(), api.getSnapshots(30)])
+        .then(([p, s]) => {
+          setPortfolio(p);
+          setSnapshots(s);
+        })
         .catch(console.error)
         .finally(() => setLoading(false));
     }
@@ -80,6 +90,16 @@ export default function DashboardPage() {
                 </p>
               </div>
             </div>
+
+            {/* Portfolio History Chart */}
+            {snapshots.length > 1 && (
+              <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 mb-8">
+                <h2 className="text-lg font-semibold text-white mb-4">
+                  Portfolio Value History
+                </h2>
+                <PortfolioChart snapshots={snapshots} />
+              </div>
+            )}
 
             {/* Positions */}
             <div className="bg-gray-900 rounded-lg border border-gray-800">
@@ -158,5 +178,96 @@ export default function DashboardPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function PortfolioChart({ snapshots }: { snapshots: Snapshot[] }) {
+  const width = 700;
+  const height = 200;
+  const padding = { top: 20, right: 20, bottom: 30, left: 80 };
+  const chartW = width - padding.left - padding.right;
+  const chartH = height - padding.top - padding.bottom;
+
+  const values = snapshots.map((s) => s.total_value);
+  const minVal = Math.min(...values) * 0.999;
+  const maxVal = Math.max(...values) * 1.001;
+  const range = maxVal - minVal || 1;
+
+  const points = snapshots.map((s, i) => {
+    const x = padding.left + (i / (snapshots.length - 1)) * chartW;
+    const y = padding.top + chartH - ((s.total_value - minVal) / range) * chartH;
+    return { x, y, ...s };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+
+  const isUp = values[values.length - 1] >= values[0];
+  const lineColor = isUp ? "#22c55e" : "#ef4444";
+
+  // Y-axis labels
+  const yLabels = [minVal, minVal + range / 2, maxVal];
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
+      {/* Grid lines */}
+      {yLabels.map((val) => {
+        const y = padding.top + chartH - ((val - minVal) / range) * chartH;
+        return (
+          <g key={val}>
+            <line
+              x1={padding.left}
+              y1={y}
+              x2={width - padding.right}
+              y2={y}
+              stroke="#374151"
+              strokeDasharray="4 4"
+            />
+            <text x={padding.left - 8} y={y + 4} textAnchor="end" fill="#9ca3af" fontSize="11">
+              {formatCurrency(val)}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Line */}
+      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" />
+
+      {/* Dots on first and last */}
+      {[points[0], points[points.length - 1]].map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r="3" fill={lineColor} />
+      ))}
+
+      {/* X-axis date labels (first and last) */}
+      {[points[0], points[points.length - 1]].map((p, i) => (
+        <text
+          key={i}
+          x={p.x}
+          y={height - 5}
+          textAnchor={i === 0 ? "start" : "end"}
+          fill="#9ca3af"
+          fontSize="11"
+        >
+          {new Date(p.snapshot_date + "T00:00:00").toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          })}
+        </text>
+      ))}
+
+      {/* $100k baseline */}
+      {minVal <= 100000 && maxVal >= 100000 && (
+        <>
+          <line
+            x1={padding.left}
+            y1={padding.top + chartH - ((100000 - minVal) / range) * chartH}
+            x2={width - padding.right}
+            y2={padding.top + chartH - ((100000 - minVal) / range) * chartH}
+            stroke="#6b7280"
+            strokeDasharray="2 4"
+            strokeWidth="1"
+          />
+        </>
+      )}
+    </svg>
   );
 }

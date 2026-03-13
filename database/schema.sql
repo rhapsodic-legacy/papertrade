@@ -83,6 +83,31 @@ create policy "Users can manage their own watchlist"
     on public.watchlist for all
     using (auth.uid() = user_id);
 
+-- Portfolio snapshots table (daily value tracking)
+create table public.portfolio_snapshots (
+    id uuid default gen_random_uuid() primary key,
+    user_id uuid references public.profiles(id) on delete cascade not null,
+    total_value numeric(18, 2) not null,
+    cash_balance numeric(18, 2) not null,
+    invested_value numeric(18, 2) not null,
+    snapshot_date date not null default current_date,
+    created_at timestamptz not null default now(),
+    unique(user_id, snapshot_date)
+);
+
+alter table public.portfolio_snapshots enable row level security;
+
+create policy "Users can view their own snapshots"
+    on public.portfolio_snapshots for select
+    using (auth.uid() = user_id);
+
+create policy "Service role can insert snapshots"
+    on public.portfolio_snapshots for insert
+    with check (true);
+
+create index idx_snapshots_user_date
+    on public.portfolio_snapshots(user_id, snapshot_date desc);
+
 -- Function to auto-create profile on signup
 create or replace function public.handle_new_user()
 returns trigger as $$

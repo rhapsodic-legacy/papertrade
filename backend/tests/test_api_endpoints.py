@@ -157,6 +157,54 @@ class TestPortfolioEndpoints:
         assert resp.status_code == 401
 
 
+class TestSnapshotEndpoints:
+    def test_snapshots_requires_auth(self):
+        resp = client.get("/api/portfolio/snapshots")
+        assert resp.status_code == 401
+
+    def test_get_snapshots_success(self):
+        mock_db = MagicMock()
+        query = MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.limit.return_value = query
+        result = MagicMock()
+        result.data = [
+            {
+                "snapshot_date": "2026-03-12",
+                "total_value": 100500.00,
+                "cash_balance": 90000.00,
+                "invested_value": 10500.00,
+            },
+        ]
+        query.execute.return_value = result
+        mock_db.table.return_value = query
+
+        with (
+            patch("app.routers.portfolio.get_user_id_from_token", return_value="user-1"),
+            patch("app.routers.portfolio.get_supabase_admin", return_value=mock_db),
+        ):
+            resp = client.get(
+                "/api/portfolio/snapshots",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["total_value"] == 100500.00
+
+    def test_trigger_snapshots(self):
+        with patch(
+            "app.routers.portfolio.take_all_snapshots",
+            new_callable=AsyncMock,
+            return_value=5,
+        ):
+            resp = client.post("/api/portfolio/snapshots/trigger")
+        assert resp.status_code == 200
+        assert resp.json()["message"] == "Snapshots created for 5 users"
+
+
 class TestWatchlistEndpoints:
     def test_watchlist_requires_auth(self):
         resp = client.get("/api/watchlist/")

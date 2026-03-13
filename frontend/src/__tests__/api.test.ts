@@ -173,6 +173,28 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("snapshots", () => {
+    it("fetches portfolio snapshots", async () => {
+      api.setToken("test-token");
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { snapshot_date: "2026-03-12", total_value: 100500, cash_balance: 90000, invested_value: 10500 },
+          { snapshot_date: "2026-03-13", total_value: 101000, cash_balance: 90000, invested_value: 11000 },
+        ],
+      });
+
+      const result = await api.getSnapshots();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/portfolio/snapshots?days=30"),
+        expect.any(Object)
+      );
+      expect(result).toHaveLength(2);
+      expect(result[0].total_value).toBe(100500);
+    });
+  });
+
   describe("getQuote", () => {
     it("constructs correct URL", async () => {
       mockFetch.mockResolvedValueOnce({

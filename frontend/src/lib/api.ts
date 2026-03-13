@@ -138,6 +138,17 @@ class ApiClient {
     >(`/api/portfolio/leaderboard?limit=${limit}`);
   }
 
+  async getSnapshots(days = 30) {
+    return this.request<
+      {
+        snapshot_date: string;
+        total_value: number;
+        cash_balance: number;
+        invested_value: number;
+      }[]
+    >(`/api/portfolio/snapshots?days=${days}`);
+  }
+
   // Trading
   async placeTrade(
     symbol: string,
