@@ -11,9 +11,12 @@ app = FastAPI(
     version="0.1.0",
 )
 
-allowed_origins = ["http://localhost:3000"]
+allowed_origins = [
+    "http://localhost:3000",
+    "https://papertrade-iota.vercel.app",
+]
 frontend_url = os.environ.get("FRONTEND_URL")
-if frontend_url:
+if frontend_url and frontend_url not in allowed_origins:
     allowed_origins.append(frontend_url)
 
 app.add_middleware(
