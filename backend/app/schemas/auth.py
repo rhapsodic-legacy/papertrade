@@ -12,6 +12,15 @@ class SignInRequest(BaseModel):
     password: str
 
 
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class UpdatePasswordRequest(BaseModel):
+    access_token: str
+    new_password: str
+
+
 class AuthResponse(BaseModel):
     access_token: str
     refresh_token: str

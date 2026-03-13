@@ -1,7 +1,9 @@
+import os
+
 from fastapi import APIRouter, Request
 
-from app.schemas.auth import SignUpRequest, SignInRequest
-from app.services.auth import sign_up, sign_in, get_profile, get_user_id_from_token
+from app.schemas.auth import SignUpRequest, SignInRequest, ResetPasswordRequest, UpdatePasswordRequest
+from app.services.auth import sign_up, sign_in, get_profile, get_user_id_from_token, reset_password, update_password
 
 router = APIRouter()
 
@@ -14,6 +16,18 @@ async def signup(req: SignUpRequest):
 @router.post("/signin")
 async def signin(req: SignInRequest):
     return await sign_in(req.email, req.password)
+
+
+@router.post("/reset-password")
+async def request_reset(req: ResetPasswordRequest):
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    redirect_url = f"{frontend_url}/auth/reset"
+    return await reset_password(req.email, redirect_url)
+
+
+@router.post("/update-password")
+async def update_pwd(req: UpdatePasswordRequest):
+    return await update_password(req.access_token, req.new_password)
 
 
 @router.get("/profile")

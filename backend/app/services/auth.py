@@ -57,6 +57,26 @@ async def sign_in(email: str, password: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
 
+async def reset_password(email: str, redirect_url: str) -> dict:
+    db = get_supabase_client()
+    try:
+        db.auth.reset_password_email(email, {"redirect_to": redirect_url})
+        return {"message": "If an account exists with that email, a reset link has been sent"}
+    except Exception:
+        # Return same message to avoid leaking whether email exists
+        return {"message": "If an account exists with that email, a reset link has been sent"}
+
+
+async def update_password(access_token: str, new_password: str) -> dict:
+    db = get_supabase_client()
+    try:
+        db.auth._headers = {**db.auth._headers, "Authorization": f"Bearer {access_token}"}
+        db.auth.update_user({"password": new_password})
+        return {"message": "Password updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 async def get_profile(user_id: str) -> dict:
     db = get_supabase_admin()
     resp = db.table("profiles").select("*").eq("id", user_id).single().execute()
