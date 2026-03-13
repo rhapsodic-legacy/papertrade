@@ -3,6 +3,15 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import market_data
+
+
+@pytest.fixture(autouse=True)
+def clear_price_cache():
+    """Clear the price cache before each test."""
+    market_data._price_cache.clear()
+    yield
+    market_data._price_cache.clear()
 
 
 @pytest.fixture

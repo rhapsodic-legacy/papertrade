@@ -20,7 +20,7 @@ async def execute_trade(
         raise HTTPException(status_code=404, detail=f"Could not get quote for {symbol}")
 
     price = quote["price"]
-    total = round(price * quantity, 2)
+    total = round(price * quantity, 8)
 
     db = get_supabase_admin()
 
@@ -89,7 +89,7 @@ def _execute_buy(
         new_avg_cost = ((old_qty * old_cost) + (quantity * price)) / new_qty
 
         db.table("positions").update(
-            {"quantity": new_qty, "avg_cost_basis": round(new_avg_cost, 2)}
+            {"quantity": new_qty, "avg_cost_basis": round(new_avg_cost, 8)}
         ).eq("id", existing["id"]).execute()
     else:
         db.table("positions").insert(

@@ -1,4 +1,4 @@
-import { formatCurrency, formatNumber, formatDate, pnlColor } from "@/lib/utils";
+import { formatCurrency, formatPrice, formatNumber, formatDate, pnlColor } from "@/lib/utils";
 
 describe("formatCurrency", () => {
   it("formats positive numbers", () => {
@@ -15,6 +15,20 @@ describe("formatCurrency", () => {
 
   it("formats negative numbers", () => {
     expect(formatCurrency(-1500.75)).toBe("-$1,500.75");
+  });
+});
+
+describe("formatPrice", () => {
+  it("shows 4 decimals for stock-range prices", () => {
+    expect(formatPrice(175.5)).toBe("$175.5000");
+  });
+
+  it("shows 6 decimals for sub-dollar prices", () => {
+    expect(formatPrice(0.01234)).toBe("$0.012340");
+  });
+
+  it("shows 4 decimals for crypto above $1", () => {
+    expect(formatPrice(65000.1234)).toBe("$65,000.1234");
   });
 });
 

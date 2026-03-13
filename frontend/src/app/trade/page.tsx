@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatPrice } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
 
 interface Asset {
@@ -80,7 +80,7 @@ export default function TradePage() {
       );
       setMessage({
         type: "success",
-        text: `${side === "buy" ? "Bought" : "Sold"} ${result.quantity} ${result.symbol} at ${formatCurrency(result.price)} for ${formatCurrency(result.total)}`,
+        text: `${side === "buy" ? "Bought" : "Sold"} ${result.quantity} ${result.symbol} at ${formatPrice(result.price)} for ${formatCurrency(result.total)}`,
       });
       setQuantity("");
     } catch (err: unknown) {
@@ -164,7 +164,7 @@ export default function TradePage() {
                     {quote.name || quote.symbol}
                   </h2>
                   <p className="text-3xl font-bold text-white mt-1">
-                    {formatCurrency(quote.price)}
+                    {formatPrice(quote.price)}
                   </p>
                   {quote.change_pct !== null && (
                     <p

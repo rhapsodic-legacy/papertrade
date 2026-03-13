@@ -7,6 +7,17 @@ export function formatCurrency(value: number): string {
   }).format(value);
 }
 
+export function formatPrice(value: number): string {
+  // Use 4 decimal places for all prices to capture sub-penny movements
+  const decimals = value < 1 ? 6 : 4;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value);
+}
+
 export function formatNumber(value: number, decimals = 2): string {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: decimals,

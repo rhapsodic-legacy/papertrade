@@ -1,4 +1,5 @@
 import httpx
+import time
 from datetime import datetime, timezone
 
 from app.config import get_settings
@@ -42,6 +43,21 @@ CRYPTO_MAP = {
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
+# Price cache: {symbol: {"data": quote_dict, "timestamp": float}}
+CACHE_TTL_SECONDS = 30
+_price_cache: dict[str, dict] = {}
+
+
+def _get_cached(symbol: str) -> dict | None:
+    entry = _price_cache.get(symbol)
+    if entry and (time.time() - entry["timestamp"]) < CACHE_TTL_SECONDS:
+        return entry["data"]
+    return None
+
+
+def _set_cached(symbol: str, data: dict) -> None:
+    _price_cache[symbol] = {"data": data, "timestamp": time.time()}
+
 
 def is_stock_market_open() -> bool:
     now = datetime.now(timezone.utc)
@@ -54,6 +70,10 @@ def is_stock_market_open() -> bool:
 
 
 async def get_stock_quote(symbol: str) -> dict | None:
+    cached = _get_cached(symbol)
+    if cached:
+        return cached
+
     settings = get_settings()
     async with httpx.AsyncClient() as client:
         resp = await client.get(
@@ -65,7 +85,7 @@ async def get_stock_quote(symbol: str) -> dict | None:
         data = resp.json()
         if data.get("c", 0) == 0:
             return None
-        return {
+        result = {
             "symbol": symbol,
             "asset_type": "stock",
             "price": data["c"],  # current price
@@ -73,9 +93,15 @@ async def get_stock_quote(symbol: str) -> dict | None:
             "change_pct": data["dp"],  # change percent
             "name": TOP_STOCKS.get(symbol, symbol),
         }
+        _set_cached(symbol, result)
+        return result
 
 
 async def get_crypto_quote(symbol: str) -> dict | None:
+    cached = _get_cached(symbol)
+    if cached:
+        return cached
+
     crypto = CRYPTO_MAP.get(symbol.upper())
     if not crypto:
         return None
@@ -86,6 +112,7 @@ async def get_crypto_quote(symbol: str) -> dict | None:
                 "ids": crypto["coingecko_id"],
                 "vs_currencies": "usd",
                 "include_24hr_change": "true",
+                "precision": "full",
             },
         )
         if resp.status_code != 200:
@@ -96,14 +123,16 @@ async def get_crypto_quote(symbol: str) -> dict | None:
         if price is None:
             return None
         change_pct = coin_data.get("usd_24h_change")
-        return {
+        result = {
             "symbol": symbol.upper(),
             "asset_type": "crypto",
             "price": price,
-            "change": round(price * (change_pct / 100), 2) if change_pct else None,
+            "change": round(price * (change_pct / 100), 6) if change_pct else None,
             "change_pct": round(change_pct, 2) if change_pct else None,
             "name": crypto["name"],
         }
+        _set_cached(symbol, result)
+        return result
 
 
 async def get_quote(symbol: str, asset_type: str) -> dict | None:

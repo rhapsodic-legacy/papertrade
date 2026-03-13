@@ -28,7 +28,7 @@ create table public.positions (
     symbol text not null,
     asset_type text not null check (asset_type in ('stock', 'crypto')),
     quantity numeric(18, 8) not null default 0,
-    avg_cost_basis numeric(15, 2) not null default 0,
+    avg_cost_basis numeric(18, 8) not null default 0,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     unique(user_id, symbol)
@@ -52,8 +52,8 @@ create table public.transactions (
     asset_type text not null check (asset_type in ('stock', 'crypto')),
     side text not null check (side in ('buy', 'sell')),
     quantity numeric(18, 8) not null,
-    price numeric(15, 2) not null,
-    total numeric(15, 2) not null,
+    price numeric(18, 8) not null,
+    total numeric(18, 8) not null,
     created_at timestamptz not null default now()
 );
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatPrice, formatDate } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
 
 interface Transaction {
@@ -105,7 +105,7 @@ export default function HistoryPage() {
                         {tx.quantity}
                       </td>
                       <td className="px-6 py-4 text-right text-gray-300">
-                        {formatCurrency(tx.price)}
+                        {formatPrice(tx.price)}
                       </td>
                       <td className="px-6 py-4 text-right text-white font-medium">
                         {formatCurrency(tx.total)}

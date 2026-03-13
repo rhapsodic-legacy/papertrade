@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { formatCurrency, pnlColor } from "@/lib/utils";
+import { formatCurrency, formatPrice, pnlColor } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
 
 interface Position {
@@ -128,10 +128,10 @@ export default function DashboardPage() {
                             {pos.quantity}
                           </td>
                           <td className="px-6 py-4 text-right text-gray-300">
-                            {formatCurrency(pos.avg_cost_basis)}
+                            {formatPrice(pos.avg_cost_basis)}
                           </td>
                           <td className="px-6 py-4 text-right text-gray-300">
-                            {formatCurrency(pos.current_price)}
+                            {formatPrice(pos.current_price)}
                           </td>
                           <td className="px-6 py-4 text-right text-gray-300">
                             {formatCurrency(pos.market_value)}
