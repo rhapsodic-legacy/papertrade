@@ -11,17 +11,20 @@ export default function ResetPasswordPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
-    // Supabase appends tokens to the URL hash: #access_token=...&type=recovery
+    // Supabase appends tokens to the URL hash: #access_token=...&refresh_token=...&type=recovery
     const hash = window.location.hash.substring(1);
     const params = new URLSearchParams(hash);
     const token = params.get("access_token");
+    const refresh = params.get("refresh_token");
     const type = params.get("type");
 
     if (token && type === "recovery") {
       setAccessToken(token);
+      setRefreshToken(refresh);
     } else {
       setError("Invalid or expired reset link. Please request a new one.");
     }
@@ -49,7 +52,7 @@ export default function ResetPasswordPage() {
 
     setLoading(true);
     try {
-      const resp = await api.updatePassword(accessToken, password);
+      const resp = await api.updatePassword(accessToken, refreshToken || "", password);
       setMessage(resp.message);
       setTimeout(() => router.push("/auth"), 2000);
     } catch (err: unknown) {

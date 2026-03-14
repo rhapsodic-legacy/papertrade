@@ -65,10 +65,10 @@ class ApiClient {
     });
   }
 
-  async updatePassword(accessToken: string, newPassword: string) {
+  async updatePassword(accessToken: string, refreshToken: string, newPassword: string) {
     return this.request<{ message: string }>("/api/auth/update-password", {
       method: "POST",
-      body: JSON.stringify({ access_token: accessToken, new_password: newPassword }),
+      body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, new_password: newPassword }),
     });
   }
 

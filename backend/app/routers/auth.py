@@ -27,7 +27,7 @@ async def request_reset(req: ResetPasswordRequest):
 
 @router.post("/update-password")
 async def update_pwd(req: UpdatePasswordRequest):
-    return await update_password(req.access_token, req.new_password)
+    return await update_password(req.access_token, req.refresh_token, req.new_password)
 
 
 @router.get("/profile")

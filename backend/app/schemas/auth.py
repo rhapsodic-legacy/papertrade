@@ -18,6 +18,7 @@ class ResetPasswordRequest(BaseModel):
 
 class UpdatePasswordRequest(BaseModel):
     access_token: str
+    refresh_token: str = ""
     new_password: str
 
 

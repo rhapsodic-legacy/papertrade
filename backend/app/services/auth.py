@@ -67,10 +67,11 @@ async def reset_password(email: str, redirect_url: str) -> dict:
         return {"message": "If an account exists with that email, a reset link has been sent"}
 
 
-async def update_password(access_token: str, new_password: str) -> dict:
+async def update_password(access_token: str, refresh_token: str, new_password: str) -> dict:
     db = get_supabase_client()
     try:
-        db.auth._headers = {**db.auth._headers, "Authorization": f"Bearer {access_token}"}
+        # Establish a session with the recovery tokens so update_user works
+        db.auth.set_session(access_token, refresh_token)
         db.auth.update_user({"password": new_password})
         return {"message": "Password updated successfully"}
     except Exception as e:
