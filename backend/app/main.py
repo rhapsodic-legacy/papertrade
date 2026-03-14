@@ -37,3 +37,14 @@ app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"]
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/api/debug-env")
+async def debug_env():
+    return {
+        "has_supabase_url": bool(os.environ.get("SUPABASE_URL")),
+        "has_supabase_anon_key": bool(os.environ.get("SUPABASE_ANON_KEY")),
+        "has_supabase_service_role_key": bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
+        "has_finnhub_api_key": bool(os.environ.get("FINNHUB_API_KEY")),
+        "env_var_count": len(os.environ),
+    }
