@@ -41,10 +41,21 @@ async def health_check():
 
 @app.get("/api/debug-env")
 async def debug_env():
+    from app.config import get_settings
+    try:
+        settings = get_settings()
+        has_settings = True
+        settings_error = None
+    except Exception as e:
+        has_settings = False
+        settings_error = str(e)
     return {
         "has_supabase_url": bool(os.environ.get("SUPABASE_URL")),
         "has_supabase_anon_key": bool(os.environ.get("SUPABASE_ANON_KEY")),
         "has_supabase_service_role_key": bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
         "has_finnhub_api_key": bool(os.environ.get("FINNHUB_API_KEY")),
+        "has_starting_balance": bool(os.environ.get("STARTING_BALANCE")),
         "env_var_count": len(os.environ),
+        "has_settings": has_settings,
+        "settings_error": settings_error,
     }
