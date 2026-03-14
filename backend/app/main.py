@@ -59,3 +59,14 @@ async def debug_env():
         "has_settings": has_settings,
         "settings_error": settings_error,
     }
+
+
+@app.post("/api/debug-auth")
+async def debug_auth():
+    try:
+        from app.services.supabase_client import get_supabase_client
+        db = get_supabase_client()
+        resp = db.auth.sign_in_with_password({"email": "test@test.com", "password": "test123"})
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "type": type(e).__name__}
