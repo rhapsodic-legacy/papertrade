@@ -63,12 +63,12 @@ MODELS = {
     "gemini-flash": {
         "label": "Gemini Flash",
         "api": "gemini",
-        "model_id": "gemini-2.0-flash",
+        "model_id": "gemini-2.5-flash",
     },
     "gemini-pro": {
         "label": "Gemini Pro",
         "api": "gemini",
-        "model_id": "gemini-2.0-pro",
+        "model_id": "gemini-2.5-pro",
     },
 }
 
