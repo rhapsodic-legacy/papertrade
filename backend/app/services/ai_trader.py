@@ -1,3 +1,4 @@
+import asyncio
 import json
 import httpx
 from datetime import date
@@ -453,6 +454,10 @@ async def run_ai_trading() -> dict:
                 "status": "error",
                 "error": str(e)[:200],
             })
+
+        # Rate limit: Gemini Pro allows 2 RPM, Flash 15 RPM.
+        # 35s delay keeps us safe for Pro (< 2 per minute).
+        await asyncio.sleep(35)
 
     return {
         "date": brief.get("date", date.today().isoformat()),
