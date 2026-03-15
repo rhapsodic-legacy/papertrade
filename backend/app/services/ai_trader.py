@@ -100,7 +100,9 @@ Rules:
 - Each trade needs: symbol, asset_type ("stock" or "crypto"), side ("buy" or "sell"), quantity (number).
 - For stocks, quantity must be a whole number >= 1.
 - For crypto, quantity can be a decimal (minimum 0.001).
-- You may choose to make 0 trades if you see no good opportunities.
+- Crypto markets are open 24/7 — you can always trade crypto regardless of day or time.
+- Stock markets are only open Mon-Fri, but you can still place stock trades here anytime.
+- You SHOULD make at least 1 trade if you have cash available. This is paper trading — there is no real risk.
 - Maximum 5 trades per day.
 - Think about position sizing — don't put everything into one trade.
 
@@ -214,7 +216,7 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
             "responseMimeType": "application/json",
         },
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             url,
             params={"key": api_key},
@@ -223,7 +225,15 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
         if resp.status_code != 200:
             raise Exception(f"Gemini {model_id} error {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        # Extract text from response — handle thinking models that may
+        # return multiple parts (thought + response)
+        candidate = data["candidates"][0]["content"]
+        parts = candidate.get("parts", [])
+        # Find the last text part (thinking models put thought first, answer last)
+        for part in reversed(parts):
+            if "text" in part:
+                return part["text"]
+        raise Exception(f"Gemini {model_id}: no text in response parts: {parts[:100]}")
 
 
 async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict) -> list[dict]:
