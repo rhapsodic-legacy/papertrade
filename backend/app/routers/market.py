@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from app.services.market_brief import compile_market_brief, get_latest_brief
 from app.services.market_data import (
     get_quote,
     get_available_assets,
@@ -39,3 +40,25 @@ async def market_status():
         "stock_market_open": is_stock_market_open(),
         "crypto_market_open": True,  # 24/7
     }
+
+
+@router.post("/brief/trigger")
+async def trigger_brief():
+    """Compile today's market brief. Call daily via cron before AI trading."""
+    brief = await compile_market_brief()
+    return {
+        "message": "Market brief compiled",
+        "date": brief["date"],
+        "stocks": len(brief["stocks"]),
+        "crypto": len(brief["crypto"]),
+        "news": len(brief["news"]),
+    }
+
+
+@router.get("/brief")
+async def latest_brief():
+    """Get the most recent market brief."""
+    brief = await get_latest_brief()
+    if not brief:
+        raise HTTPException(status_code=404, detail="No market brief available")
+    return brief
