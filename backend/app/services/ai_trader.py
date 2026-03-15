@@ -102,14 +102,13 @@ Rules:
 - For crypto, quantity can be a decimal (minimum 0.001).
 - Crypto markets are open 24/7 — you can always trade crypto regardless of day or time.
 - Stock markets are only open Mon-Fri, but you can still place stock trades here anytime.
-- You SHOULD make at least 1 trade if you have cash available. This is paper trading — there is no real risk.
+- You MUST make at least 1 trade every day. This is paper trading with fake money — there is zero risk. Not trading is the worst outcome.
 - Maximum 5 trades per day.
 - Think about position sizing — don't put everything into one trade.
+- If you have no positions yet, buy something! Spread across 3-5 assets.
 
 Respond ONLY with valid JSON in this exact format, no other text:
 {"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10}]}
-
-If no trades: {"trades": []}
 """
 
 
@@ -212,8 +211,7 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
         "systemInstruction": {"parts": [{"text": system}]},
         "generationConfig": {
             "temperature": 0.7,
-            "maxOutputTokens": 1024,
-            "responseMimeType": "application/json",
+            "maxOutputTokens": 2048,
         },
     }
     async with httpx.AsyncClient(timeout=120) as client:
@@ -223,7 +221,7 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
             json=payload,
         )
         if resp.status_code != 200:
-            raise Exception(f"Gemini {model_id} error {resp.status_code}: {resp.text[:200]}")
+            raise Exception(f"Gemini {model_id} error {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
         # Extract text from response — handle thinking models that may
         # return multiple parts (thought + response)
@@ -233,7 +231,8 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
         for part in reversed(parts):
             if "text" in part:
                 return part["text"]
-        raise Exception(f"Gemini {model_id}: no text in response parts: {parts[:100]}")
+        # If no text parts, dump what we got for debugging
+        raise Exception(f"Gemini {model_id}: no text parts. Keys: {list(candidate.keys())}. Parts: {str(parts)[:200]}")
 
 
 async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict) -> list[dict]:
@@ -281,9 +280,16 @@ What trades do you want to make today?"""
     else:
         raise Exception(f"Unknown API: {model_cfg['api']}")
 
-    # Parse response
+    # Parse response — extract JSON from text that may contain markdown fences
     try:
-        parsed = json.loads(raw)
+        text = raw.strip()
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            # Remove ```json or ``` prefix and trailing ```
+            lines = text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            text = "\n".join(lines)
+        parsed = json.loads(text)
         trades = parsed.get("trades", [])
         if not isinstance(trades, list):
             return []
