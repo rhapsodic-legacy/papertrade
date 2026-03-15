@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str
     supabase_service_role_key: str
     finnhub_api_key: str
+    gemini_api_key: str = ""
     starting_balance: float = 100_000.00
 
     model_config = {"env_file": ".env"}

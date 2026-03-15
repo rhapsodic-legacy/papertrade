@@ -135,22 +135,19 @@ class TestPortfolioEndpoints:
         resp = client.get("/api/portfolio/")
         assert resp.status_code == 401
 
-    def test_leaderboard_requires_auth(self):
-        # Leaderboard doesn't require auth in the router, but let's verify it works
-        # It calls supabase directly, so we need to mock that
-        mock_db = MagicMock()
-        result = MagicMock()
-        result.data = []
-        query = MagicMock()
-        query.select.return_value = query
-        query.limit.return_value = query
-        query.execute.return_value = result
-        mock_db.table.return_value = query
-
-        with patch("app.routers.portfolio.get_supabase_admin", return_value=mock_db):
+    def test_leaderboard_no_auth_ok(self):
+        # Leaderboard doesn't require auth — verify it returns empty when no profiles
+        mock_result = {"entries": [], "user_entry": None}
+        with patch(
+            "app.routers.portfolio.get_scored_leaderboard",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
             resp = client.get("/api/portfolio/leaderboard")
         assert resp.status_code == 200
-        assert resp.json() == []
+        data = resp.json()
+        assert data["entries"] == []
+        assert data["user_entry"] is None
 
     def test_history_requires_auth(self):
         resp = client.get("/api/portfolio/history")
