@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 
 from app.services.auth import get_user_id_from_token
+from app.services.leaderboard import get_scored_leaderboard
 from app.services.market_data import get_quote
 from app.services.snapshots import take_all_snapshots
 from app.services.supabase_client import get_supabase_admin
@@ -81,53 +82,22 @@ async def get_transaction_history(request: Request, limit: int = 50):
 
 
 @router.get("/leaderboard")
-async def get_leaderboard(limit: int = 20):
-    db = get_supabase_admin()
+async def get_leaderboard(
+    request: Request,
+    category: str = "human",
+    limit: int = 25,
+):
+    # Get user_id if authenticated (optional for leaderboard)
+    try:
+        user_id = get_user_id_from_token(request)
+    except Exception:
+        user_id = None
 
-    # Get all profiles
-    profiles_resp = db.table("profiles").select("*").execute()
-
-    # Get all open positions
-    positions_resp = db.table("positions").select("*").gt("quantity", 0).execute()
-
-    # Group positions by user
-    positions_by_user: dict[str, list] = {}
-    for pos in positions_resp.data:
-        positions_by_user.setdefault(pos["user_id"], []).append(pos)
-
-    # Fetch live prices for all unique symbols (cache makes this fast)
-    symbols_seen: dict[str, float] = {}
-    for pos in positions_resp.data:
-        key = f"{pos['asset_type']}:{pos['symbol']}"
-        if key not in symbols_seen:
-            quote = await get_quote(pos["symbol"], pos["asset_type"])
-            symbols_seen[key] = quote["price"] if quote else float(pos["avg_cost_basis"])
-
-    # Calculate live portfolio values
-    entries = []
-    for profile in profiles_resp.data:
-        cash = float(profile["cash_balance"])
-        invested = 0.0
-        for pos in positions_by_user.get(profile["id"], []):
-            key = f"{pos['asset_type']}:{pos['symbol']}"
-            price = symbols_seen.get(key, float(pos["avg_cost_basis"]))
-            invested += float(pos["quantity"]) * price
-
-        entries.append(
-            {
-                "display_name": profile["display_name"],
-                "total_portfolio_value": round(cash + invested, 2),
-                "cash_balance": round(cash, 2),
-                "invested_value": round(invested, 2),
-            }
-        )
-
-    # Sort by total value descending, add ranks
-    entries.sort(key=lambda e: e["total_portfolio_value"], reverse=True)
-    for i, entry in enumerate(entries[:limit], 1):
-        entry["rank"] = i
-
-    return entries[:limit]
+    return await get_scored_leaderboard(
+        user_id=user_id,
+        category=category,
+        limit=limit,
+    )
 
 
 @router.get("/snapshots")

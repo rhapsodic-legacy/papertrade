@@ -6,6 +6,8 @@ create table public.profiles (
     id uuid references auth.users on delete cascade primary key,
     display_name text not null,
     cash_balance numeric(15, 2) not null default 100000.00,
+    is_ai boolean not null default false,
+    ai_model text default null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -126,16 +128,5 @@ create trigger on_auth_user_created
     after insert on auth.users
     for each row execute function public.handle_new_user();
 
--- Leaderboard view
-create or replace view public.leaderboard as
-select
-    p.id,
-    p.display_name,
-    p.cash_balance,
-    p.created_at,
-    coalesce(sum(pos.quantity * pos.avg_cost_basis), 0) as invested_value,
-    p.cash_balance + coalesce(sum(pos.quantity * pos.avg_cost_basis), 0) as total_portfolio_value
-from public.profiles p
-left join public.positions pos on p.id = pos.user_id and pos.quantity > 0
-group by p.id, p.display_name, p.cash_balance, p.created_at
-order by total_portfolio_value desc;
+-- Index for filtering AI vs human profiles
+create index idx_profiles_is_ai on public.profiles(is_ai);

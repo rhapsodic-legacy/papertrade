@@ -195,16 +195,31 @@ class ApiClient {
     >(`/api/portfolio/history?limit=${limit}`);
   }
 
-  async getLeaderboard(limit = 20) {
-    return this.request<
-      {
+  async getLeaderboard(category: "human" | "ai" = "human", limit = 25) {
+    return this.request<{
+      entries: {
         rank: number;
         display_name: string;
-        total_portfolio_value: number;
-        cash_balance: number;
-        invested_value: number;
-      }[]
-    >(`/api/portfolio/leaderboard?limit=${limit}`);
+        score: number;
+        return_1d: number;
+        return_7d: number;
+        return_30d: number;
+        return_90d: number;
+        is_ai: boolean;
+        ai_model: string | null;
+      }[];
+      user_entry: {
+        rank: number;
+        display_name: string;
+        score: number;
+        return_1d: number;
+        return_7d: number;
+        return_30d: number;
+        return_90d: number;
+        is_ai: boolean;
+        ai_model: string | null;
+      } | null;
+    }>(`/api/portfolio/leaderboard?category=${category}&limit=${limit}`);
   }
 
   async getSnapshots(days = 30) {
