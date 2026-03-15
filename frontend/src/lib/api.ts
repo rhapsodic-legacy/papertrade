@@ -2,14 +2,21 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 class ApiClient {
   private token: string | null = null;
+  private onSessionExpired: (() => void) | null = null;
+  private refreshing: Promise<boolean> | null = null;
 
   setToken(token: string | null) {
     this.token = token;
   }
 
+  setOnSessionExpired(callback: () => void) {
+    this.onSessionExpired = callback;
+  }
+
   private async request<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    isRetry = false
   ): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -25,12 +32,50 @@ class ApiClient {
       headers,
     });
 
+    if (res.status === 401 && !isRetry && path !== "/api/auth/refresh") {
+      const refreshed = await this.tryRefresh();
+      if (refreshed) {
+        return this.request<T>(path, options, true);
+      }
+      if (this.onSessionExpired) this.onSessionExpired();
+    }
+
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: "Request failed" }));
       throw new Error(error.detail || `HTTP ${res.status}`);
     }
 
     return res.json();
+  }
+
+  private async tryRefresh(): Promise<boolean> {
+    if (this.refreshing) return this.refreshing;
+
+    this.refreshing = (async () => {
+      const refreshToken = localStorage.getItem("refresh_token");
+      if (!refreshToken) return false;
+
+      try {
+        const res = await fetch(`${API_URL}/api/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!res.ok) return false;
+
+        const data = await res.json();
+        this.token = data.access_token;
+        localStorage.setItem("access_token", data.access_token);
+        localStorage.setItem("refresh_token", data.refresh_token);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+
+    return this.refreshing;
   }
 
   // Auth
@@ -69,6 +114,16 @@ class ApiClient {
     return this.request<{ message: string }>("/api/auth/update-password", {
       method: "POST",
       body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, new_password: newPassword }),
+    });
+  }
+
+  async refreshSession(refreshToken: string) {
+    return this.request<{
+      access_token: string;
+      refresh_token: string;
+    }>("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
     });
   }
 

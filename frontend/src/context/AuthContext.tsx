@@ -25,6 +25,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    api.setOnSessionExpired(() => {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      api.setToken(null);
+      setUser(null);
+    });
+
     const token = localStorage.getItem("access_token");
     if (token) {
       api.setToken(token);
@@ -40,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         .catch(() => {
           localStorage.removeItem("access_token");
+          localStorage.removeItem("refresh_token");
           api.setToken(null);
         })
         .finally(() => setLoading(false));
@@ -51,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = async (email: string, password: string) => {
     const resp = await api.signIn(email, password);
     localStorage.setItem("access_token", resp.access_token);
+    localStorage.setItem("refresh_token", resp.refresh_token);
     api.setToken(resp.access_token);
     const profile = await api.getProfile();
     setUser({
@@ -65,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const resp = await api.signUp(email, password, displayName);
     if (resp.access_token) {
       localStorage.setItem("access_token", resp.access_token);
+      localStorage.setItem("refresh_token", resp.refresh_token);
       api.setToken(resp.access_token);
       const profile = await api.getProfile();
       setUser({
@@ -78,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = () => {
     localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
     api.setToken(null);
     setUser(null);
   };

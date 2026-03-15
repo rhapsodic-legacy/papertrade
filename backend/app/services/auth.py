@@ -78,6 +78,18 @@ async def update_password(access_token: str, refresh_token: str, new_password: s
         raise HTTPException(status_code=400, detail=str(e))
 
 
+async def refresh_session(refresh_token: str) -> dict:
+    db = get_supabase_client()
+    try:
+        resp = db.auth.refresh_session(refresh_token)
+        return {
+            "access_token": resp.session.access_token,
+            "refresh_token": resp.session.refresh_token,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+
+
 async def get_profile(user_id: str) -> dict:
     db = get_supabase_admin()
     resp = db.table("profiles").select("*").eq("id", user_id).single().execute()
