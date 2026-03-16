@@ -289,6 +289,34 @@ class ApiClient {
       method: "DELETE",
     });
   }
+
+  // AI Commentary
+  async getCommentary(date?: string, limit = 10) {
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    params.set("limit", String(limit));
+    return this.request<{
+      entries: {
+        display_name: string;
+        personality: string;
+        model: string;
+        commentary: string;
+        trades_summary: {
+          symbol: string;
+          side: string;
+          quantity: number;
+          price: number;
+        }[];
+        date: string;
+      }[];
+    }>(`/api/ai/commentary?${params.toString()}`);
+  }
+
+  async getCommentaryDates(limit = 30) {
+    return this.request<{ dates: string[] }>(
+      `/api/ai/commentary/dates?limit=${limit}`
+    );
+  }
 }
 
 export const api = new ApiClient();

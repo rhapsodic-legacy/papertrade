@@ -47,6 +47,12 @@ export default function Navbar() {
                 >
                   Leaderboard
                 </Link>
+                <Link
+                  href="/insights"
+                  className="text-gray-300 hover:text-white transition"
+                >
+                  AI Insights
+                </Link>
               </div>
             )}
           </div>
