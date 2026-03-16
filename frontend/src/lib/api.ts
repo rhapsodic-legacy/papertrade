@@ -154,6 +154,14 @@ class ApiClient {
     }>(`/api/market/quote/${assetType}/${symbol}`);
   }
 
+  async getPriceHistory(assetType: string, symbol: string, days = 30) {
+    return this.request<{
+      symbol: string;
+      asset_type: string;
+      candles: { time: number; close: number; open?: number; high?: number; low?: number }[];
+    }>(`/api/market/history/${assetType}/${symbol}?days=${days}`);
+  }
+
   async getMarketStatus() {
     return this.request<{
       stock_market_open: boolean;

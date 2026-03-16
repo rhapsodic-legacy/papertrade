@@ -65,9 +65,14 @@ export default function InsightsPage() {
           setDates(data.dates);
           if (data.dates.length > 0 && !selectedDate) {
             setSelectedDate(data.dates[0]);
+          } else if (data.dates.length === 0) {
+            setLoading(false);
           }
         })
-        .catch(console.error);
+        .catch((err) => {
+          console.error(err);
+          setLoading(false);
+        });
     }
   }, [user]);
 

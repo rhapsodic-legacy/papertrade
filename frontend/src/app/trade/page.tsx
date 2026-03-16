@@ -6,6 +6,14 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { formatCurrency, formatPrice } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 interface Asset {
   symbol: string;
@@ -38,6 +46,11 @@ export default function TradePage() {
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [chartData, setChartData] = useState<{ date: string; price: number }[]>(
+    []
+  );
+  const [chartDays, setChartDays] = useState(30);
+  const [chartLoading, setChartLoading] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/auth");
@@ -62,6 +75,28 @@ export default function TradePage() {
     const interval = setInterval(fetchQuote, 30000); // refresh every 30s
     return () => clearInterval(interval);
   }, [selectedSymbol, assetType]);
+
+  useEffect(() => {
+    if (!selectedSymbol) {
+      setChartData([]);
+      return;
+    }
+    setChartLoading(true);
+    api
+      .getPriceHistory(assetType, selectedSymbol, chartDays)
+      .then((resp) => {
+        const points = resp.candles.map((c) => ({
+          date: new Date(c.time * 1000).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          }),
+          price: c.close,
+        }));
+        setChartData(points);
+      })
+      .catch(() => setChartData([]))
+      .finally(() => setChartLoading(false));
+  }, [selectedSymbol, assetType, chartDays]);
 
   const currentAssets = assetType === "stock" ? assets.stocks : assets.crypto;
 
@@ -155,11 +190,11 @@ export default function TradePage() {
             </div>
           </div>
 
-          {/* Trade Form */}
+          {/* Quote + Chart + Trade Form */}
           <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
             {quote ? (
               <>
-                <div className="mb-6">
+                <div className="mb-4">
                   <h2 className="text-xl font-bold text-white">
                     {quote.name || quote.symbol}
                   </h2>
@@ -177,6 +212,88 @@ export default function TradePage() {
                       {(quote.change_pct ?? 0) > 0 ? "+" : ""}
                       {quote.change_pct}% today
                     </p>
+                  )}
+                </div>
+
+                {/* Price Chart */}
+                <div className="mb-6">
+                  <div className="flex gap-2 mb-3">
+                    {[
+                      { label: "7D", value: 7 },
+                      { label: "1M", value: 30 },
+                      { label: "3M", value: 90 },
+                      { label: "1Y", value: 365 },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setChartDays(opt.value)}
+                        className={`px-3 py-1 rounded text-xs font-medium transition ${
+                          chartDays === opt.value
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-800 text-gray-400 hover:text-white"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  {chartLoading ? (
+                    <div className="h-40 flex items-center justify-center text-gray-500 text-sm">
+                      Loading chart...
+                    </div>
+                  ) : chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={160}>
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.3} />
+                            <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fill: "#6b7280", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          domain={["auto", "auto"]}
+                          tick={{ fill: "#6b7280", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={60}
+                          tickFormatter={(v) =>
+                            v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v.toFixed(2)}`
+                          }
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "#1f2937",
+                            border: "1px solid #374151",
+                            borderRadius: "8px",
+                            color: "#fff",
+                            fontSize: "12px",
+                          }}
+                          formatter={(value) => [
+                            formatPrice(Number(value)),
+                            "Price",
+                          ]}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="price"
+                          stroke="#3b82f6"
+                          fill="url(#priceGrad)"
+                          strokeWidth={2}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-gray-500 text-sm">
+                      No chart data available
+                    </div>
                   )}
                 </div>
 

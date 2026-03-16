@@ -22,8 +22,8 @@ class TestMarketEndpoints:
         data = resp.json()
         assert "stocks" in data
         assert "crypto" in data
-        assert len(data["stocks"]) == 20
-        assert len(data["crypto"]) == 8
+        assert len(data["stocks"]) == 63
+        assert len(data["crypto"]) == 20
 
     def test_market_status(self):
         resp = client.get("/api/market/status")

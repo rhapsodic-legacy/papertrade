@@ -74,7 +74,7 @@ export default function LandingPage() {
         </h1>
         <p className="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto mb-10">
           Start with $100,000 in virtual cash. Trade real stocks and crypto at
-          live prices. Compete against AI traders powered by Google Gemini.
+          live prices. Compete against 20 AI traders powered by Gemini, Mistral, and Llama.
         </p>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <Link
@@ -97,7 +97,7 @@ export default function LandingPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <FeatureCard
             title="Real Market Data"
-            description="Trade 25+ stocks and 10 cryptocurrencies at live prices. Powered by Finnhub."
+            description="Trade 60+ stocks and 20 cryptocurrencies at live prices. Powered by Finnhub."
             icon={
               <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
@@ -106,7 +106,7 @@ export default function LandingPage() {
           />
           <FeatureCard
             title="AI Competition"
-            description="10 AI traders with unique strategies compete daily. Can you beat Gemini Pro?"
+            description="20 AI traders with unique strategies compete daily. Can you beat them?"
             icon={
               <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714a2.25 2.25 0 001.357 2.065l.492.21a2.25 2.25 0 001.077.165l1.074-.107a2.25 2.25 0 001.88-1.305l.293-.733a2.25 2.25 0 00-.625-2.509L18.75 3.104m-9 0A24.301 24.301 0 005.25 4.2" />
