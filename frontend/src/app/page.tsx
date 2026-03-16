@@ -50,6 +50,12 @@ export default function LandingPage() {
           <span className="text-xl font-bold text-white">PaperTrade</span>
           <div className="flex items-center gap-4">
             <Link
+              href="/how-it-works"
+              className="text-sm text-gray-300 hover:text-white transition"
+            >
+              How It Works
+            </Link>
+            <Link
               href="/auth"
               className="text-sm text-gray-300 hover:text-white transition"
             >
@@ -84,10 +90,10 @@ export default function LandingPage() {
             Start Trading Free
           </Link>
           <Link
-            href="/insights"
+            href="/how-it-works"
             className="px-8 py-3 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white text-lg rounded-lg font-medium transition"
           >
-            Read AI Insights
+            How It Works
           </Link>
         </div>
       </section>
