@@ -99,10 +99,16 @@ AI_TRADERS = [
 TRADE_SYSTEM = """\
 You are managing a paper trading portfolio. You will receive:
 1. Your personality/strategy description
-2. Today's market brief (prices, movers, news)
+2. Today's market brief (prices, movers, news, fundamentals, technicals)
 3. Your current portfolio (cash + positions)
+4. Your recent trading history and performance
 
-Respond with a JSON object containing a list of trades to execute today.
+Use ALL the data provided to make informed decisions:
+- Fundamentals (PE ratio, market cap, analyst consensus) tell you about valuation
+- Technicals (RSI, SMA, momentum) tell you about price trends and timing
+- Earnings calendar warns you about upcoming volatility events
+- Your past trade results tell you what's been working or failing
+
 Rules:
 - You can buy or sell stocks and crypto from the supported list only.
 - You cannot spend more cash than you have.
@@ -293,7 +299,125 @@ async def _call_cerebras(model_id: str, system: str, user_msg: str, api_key: str
         return data["choices"][0]["message"]["content"]
 
 
-async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict) -> list[dict]:
+def _get_ai_trade_history(db, user_id: str, limit: int = 15) -> list[dict]:
+    """Get recent trades for an AI trader to include in the prompt as memory."""
+    resp = (
+        db.table("transactions")
+        .select("symbol, asset_type, side, quantity, price, total, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return resp.data if resp.data else []
+
+
+def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
+    """Format recent trades and P&L into a readable memory section."""
+    if not trades:
+        return "No trading history yet. This is your first day."
+
+    lines = ["Recent trades (newest first):"]
+    for t in trades[:10]:
+        day = t["created_at"][:10] if t.get("created_at") else "?"
+        lines.append(
+            f"  {day}: {t['side'].upper()} {t['quantity']} {t['symbol']} @ ${t['price']:,.2f}"
+        )
+
+    # Summarize position P&L
+    if positions:
+        lines.append("\nCurrent position performance:")
+        for p in positions:
+            pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100
+            direction = "up" if pnl_pct >= 0 else "down"
+            lines.append(
+                f"  {p['symbol']}: {direction} {abs(pnl_pct):.1f}% (bought avg ${p['avg_cost']:,.2f}, now ${p['current_price']:,.2f})"
+            )
+
+    return "\n".join(lines)
+
+
+def _format_enriched_brief(brief: dict) -> str:
+    """Format the enriched market brief sections for the AI prompt."""
+    sections = []
+
+    # Fundamentals for notable stocks
+    fundamentals = brief.get("fundamentals", {})
+    if fundamentals:
+        fund_lines = []
+        for sym, f in list(fundamentals.items())[:15]:
+            parts = []
+            if f.get("pe_ratio"):
+                parts.append(f"PE {f['pe_ratio']:.1f}")
+            if f.get("beta"):
+                parts.append(f"Beta {f['beta']:.2f}")
+            if f.get("dividend_yield"):
+                parts.append(f"Div {f['dividend_yield']:.1f}%")
+            if f.get("52w_high") and f.get("52w_low"):
+                parts.append(f"52w ${f['52w_low']:.0f}-${f['52w_high']:.0f}")
+            if parts:
+                fund_lines.append(f"  {sym}: {', '.join(parts)}")
+        if fund_lines:
+            sections.append("### Stock Fundamentals\n" + "\n".join(fund_lines))
+
+    # Analyst recommendations
+    recs = brief.get("analyst_recommendations", {})
+    if recs:
+        rec_lines = []
+        for sym, r in list(recs.items())[:15]:
+            total = r["buy"] + r["hold"] + r["sell"]
+            if total > 0:
+                rec_lines.append(
+                    f"  {sym}: {r['buy']} Buy / {r['hold']} Hold / {r['sell']} Sell"
+                )
+        if rec_lines:
+            sections.append("### Analyst Consensus\n" + "\n".join(rec_lines))
+
+    # Earnings calendar
+    earnings = brief.get("earnings_calendar", [])
+    if earnings:
+        earn_lines = [f"  {e['symbol']} reports {e['date']}" for e in earnings[:10]]
+        sections.append("### Upcoming Earnings (next 7 days)\n" + "\n".join(earn_lines))
+
+    # Technical indicators
+    technicals = brief.get("stock_technicals", {})
+    if technicals:
+        tech_lines = []
+        for sym, t in list(technicals.items())[:15]:
+            parts = []
+            if "rsi_14" in t:
+                label = "OVERBOUGHT" if t["rsi_14"] > 70 else "OVERSOLD" if t["rsi_14"] < 30 else ""
+                parts.append(f"RSI {t['rsi_14']}{' ' + label if label else ''}")
+            if "vs_sma_20" in t:
+                parts.append(f"{'above' if t['vs_sma_20'] > 0 else 'below'} SMA20 by {abs(t['vs_sma_20']):.1f}%")
+            if "7d_return" in t:
+                parts.append(f"7d {t['7d_return']:+.1f}%")
+            if parts:
+                tech_lines.append(f"  {sym}: {', '.join(parts)}")
+        if tech_lines:
+            sections.append("### Technical Indicators\n" + "\n".join(tech_lines))
+
+    # Crypto market data
+    crypto_data = brief.get("crypto_market_data", {})
+    if crypto_data:
+        crypto_lines = []
+        for sym, c in list(crypto_data.items())[:10]:
+            parts = []
+            if c.get("market_cap_rank"):
+                parts.append(f"Rank #{c['market_cap_rank']}")
+            if c.get("market_cap_b"):
+                parts.append(f"MCap ${c['market_cap_b']}B")
+            if c.get("ath_drop_pct") is not None:
+                parts.append(f"{c['ath_drop_pct']}% below ATH")
+            if parts:
+                crypto_lines.append(f"  {sym}: {', '.join(parts)}")
+        if crypto_lines:
+            sections.append("### Crypto Market Data\n" + "\n".join(crypto_lines))
+
+    return "\n\n".join(sections) if sections else ""
+
+
+async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "") -> list[dict]:
     """Ask an AI model for its trading decisions."""
     settings = get_settings()
     personality = PERSONALITIES[personality_key]
@@ -302,6 +426,8 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
     # Build the user message
     supported_stocks = [{"symbol": s, "name": n} for s, n in TOP_STOCKS.items()]
     supported_crypto = [{"symbol": s, "name": c["name"]} for s, c in CRYPTO_MAP.items()]
+
+    enriched_sections = _format_enriched_brief(brief)
 
     user_msg = f"""## Your Strategy
 {personality['prompt']}
@@ -317,6 +443,8 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
 ### Market News Headlines
 {json.dumps([n['headline'] for n in brief.get('news', [])[:10]], indent=2)}
 
+{enriched_sections}
+
 ### Supported Stocks
 {json.dumps(supported_stocks, indent=2)}
 
@@ -327,6 +455,9 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
 Cash: ${portfolio['cash']:,.2f}
 Positions:
 {json.dumps(portfolio['positions'], indent=2) if portfolio['positions'] else 'None — you have no positions yet.'}
+
+## Your Trading Memory
+{trade_memory}
 
 What trades do you want to make today?"""
 
@@ -509,8 +640,12 @@ async def run_ai_trading() -> dict:
             # Get portfolio state
             portfolio = await _get_ai_portfolio(db, user_id)
 
+            # Build trading memory from recent history
+            recent_trades = _get_ai_trade_history(db, user_id, limit=15)
+            trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
+
             # Ask AI for trades
-            trades = await _get_ai_trades(personality_key, model_key, brief, portfolio)
+            trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory)
 
             # Execute trades
             executed = []
