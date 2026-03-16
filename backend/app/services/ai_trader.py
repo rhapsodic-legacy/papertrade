@@ -71,9 +71,19 @@ MODELS = {
         "api": "gemini",
         "model_id": "gemini-2.5-pro",
     },
+    "mistral": {
+        "label": "Mistral",
+        "api": "mistral",
+        "model_id": "mistral-large-latest",
+    },
+    "llama": {
+        "label": "Llama",
+        "api": "cerebras",
+        "model_id": "llama-3.3-70b",
+    },
 }
 
-# All 10 AI traders: 5 personalities x 2 models
+# All AI traders: 5 personalities x 4 models = 20
 AI_TRADERS = [
     {
         "personality_key": pkey,
@@ -235,6 +245,54 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
         raise Exception(f"Gemini {model_id}: no text parts. Keys: {list(candidate.keys())}. Parts: {str(parts)[:200]}")
 
 
+async def _call_mistral(model_id: str, system: str, user_msg: str, api_key: str) -> str:
+    """Call Mistral La Plateforme API (OpenAI-compatible)."""
+    url = "https://api.mistral.ai/v1/chat/completions"
+    payload = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 2048,
+    }
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+        if resp.status_code != 200:
+            raise Exception(f"Mistral {model_id} error {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+
+async def _call_cerebras(model_id: str, system: str, user_msg: str, api_key: str) -> str:
+    """Call Cerebras API (OpenAI-compatible)."""
+    url = "https://api.cerebras.ai/v1/chat/completions"
+    payload = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 2048,
+    }
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+        if resp.status_code != 200:
+            raise Exception(f"Cerebras {model_id} error {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+
 async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict) -> list[dict]:
     """Ask an AI model for its trading decisions."""
     settings = get_settings()
@@ -273,12 +331,21 @@ Positions:
 What trades do you want to make today?"""
 
     # Call the right API
-    if model_cfg["api"] == "gemini":
+    api = model_cfg["api"]
+    if api == "gemini":
         if not settings.gemini_api_key:
             raise Exception("GEMINI_API_KEY not configured")
         raw = await _call_gemini(model_cfg["model_id"], TRADE_SYSTEM, user_msg, settings.gemini_api_key)
+    elif api == "mistral":
+        if not settings.mistral_api_key:
+            raise Exception("MISTRAL_API_KEY not configured")
+        raw = await _call_mistral(model_cfg["model_id"], TRADE_SYSTEM, user_msg, settings.mistral_api_key)
+    elif api == "cerebras":
+        if not settings.cerebras_api_key:
+            raise Exception("CEREBRAS_API_KEY not configured")
+        raw = await _call_cerebras(model_cfg["model_id"], TRADE_SYSTEM, user_msg, settings.cerebras_api_key)
     else:
-        raise Exception(f"Unknown API: {model_cfg['api']}")
+        raise Exception(f"Unknown API: {api}")
 
     # Parse response — extract JSON from text that may contain markdown fences
     try:
