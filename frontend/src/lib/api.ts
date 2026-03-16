@@ -207,6 +207,7 @@ class ApiClient {
         return_90d: number;
         is_ai: boolean;
         ai_model: string | null;
+        user_id?: string;
       }[];
       user_entry: {
         rank: number;
@@ -316,6 +317,56 @@ class ApiClient {
     return this.request<{ dates: string[] }>(
       `/api/ai/commentary/dates?limit=${limit}`
     );
+  }
+
+  // AI Traders
+  async getAiTraders() {
+    return this.request<{
+      traders: {
+        id: string;
+        display_name: string;
+        ai_model: string;
+        personality: string;
+      }[];
+    }>("/api/ai/traders");
+  }
+
+  async getAiTraderProfile(traderId: string) {
+    return this.request<{
+      display_name: string;
+      ai_model: string;
+      personality: string;
+      personality_description: string | null;
+      cash_balance: number;
+      invested_value: number;
+      total_value: number;
+      positions: {
+        symbol: string;
+        asset_type: string;
+        quantity: number;
+        avg_cost: number;
+        current_price: number;
+        market_value: number;
+      }[];
+      trades: {
+        symbol: string;
+        asset_type: string;
+        side: string;
+        quantity: number;
+        price: number;
+        total: number;
+        created_at: string;
+      }[];
+      commentary: {
+        commentary: string;
+        trades_summary: string;
+        commentary_date: string;
+      }[];
+      snapshots: {
+        snapshot_date: string;
+        total_value: number;
+      }[];
+    }>(`/api/ai/traders/${traderId}`);
   }
 }
 

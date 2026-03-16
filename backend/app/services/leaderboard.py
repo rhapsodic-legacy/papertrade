@@ -129,11 +129,13 @@ async def get_scored_leaderboard(
                 user_entry = {k: v for k, v in entry.items() if k != "user_id"}
                 break
 
-    # Trim to limit and remove user_id from response
-    entries = [
-        {k: v for k, v in e.items() if k != "user_id"}
-        for e in scored[:limit]
-    ]
+    # Trim to limit; keep user_id for AI traders (for profile links)
+    entries = []
+    for e in scored[:limit]:
+        entry = {k: v for k, v in e.items()}
+        if not e.get("is_ai"):
+            entry.pop("user_id", None)
+        entries.append(entry)
 
     return {"entries": entries, "user_entry": user_entry}
 

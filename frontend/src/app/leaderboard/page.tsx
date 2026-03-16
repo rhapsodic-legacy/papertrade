@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import Navbar from "@/components/Navbar";
@@ -16,6 +17,7 @@ interface LeaderboardEntry {
   return_90d: number;
   is_ai: boolean;
   ai_model: string | null;
+  user_id?: string;
 }
 
 function formatReturn(val: number) {
@@ -159,7 +161,16 @@ export default function LeaderboardPage() {
                           </span>
                         </td>
                         <td className="px-4 py-4 font-medium text-white">
-                          {entry.display_name}
+                          {category === "ai" && entry.user_id ? (
+                            <Link
+                              href={`/traders/${entry.user_id}`}
+                              className="hover:text-blue-400 transition"
+                            >
+                              {entry.display_name}
+                            </Link>
+                          ) : (
+                            entry.display_name
+                          )}
                         </td>
                         {category === "ai" && (
                           <td className="px-4 py-4 text-gray-400 text-sm">
