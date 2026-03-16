@@ -106,20 +106,38 @@ CRYPTO_MAP = {
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
-# Price cache: {symbol: {"data": quote_dict, "timestamp": float}}
-CACHE_TTL_SECONDS = 30
+# Price cache: {symbol: {"data": dict, "timestamp": float}}
+# Stock quotes update every 15 min (Finnhub delay), crypto less frequently on free tier
+STOCK_CACHE_TTL = 30
+CRYPTO_CACHE_TTL = 300  # 5 minutes — CoinGecko free tier is heavily rate-limited
+CHART_CACHE_TTL = 3600  # 1 hour — historical data doesn't change often
 _price_cache: dict[str, dict] = {}
+_chart_cache: dict[str, dict] = {}
 
 
 def _get_cached(symbol: str) -> dict | None:
     entry = _price_cache.get(symbol)
-    if entry and (time.time() - entry["timestamp"]) < CACHE_TTL_SECONDS:
+    if not entry:
+        return None
+    ttl = CRYPTO_CACHE_TTL if entry["data"].get("asset_type") == "crypto" else STOCK_CACHE_TTL
+    if (time.time() - entry["timestamp"]) < ttl:
         return entry["data"]
     return None
 
 
 def _set_cached(symbol: str, data: dict) -> None:
     _price_cache[symbol] = {"data": data, "timestamp": time.time()}
+
+
+def _get_chart_cached(key: str) -> list | None:
+    entry = _chart_cache.get(key)
+    if entry and (time.time() - entry["timestamp"]) < CHART_CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _set_chart_cached(key: str, data: list) -> None:
+    _chart_cache[key] = {"data": data, "timestamp": time.time()}
 
 
 def is_stock_market_open() -> bool:
@@ -138,7 +156,7 @@ async def get_stock_quote(symbol: str) -> dict | None:
         return cached
 
     settings = get_settings()
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
             f"{FINNHUB_BASE}/quote",
             params={"symbol": symbol, "token": settings.finnhub_api_key},
@@ -168,7 +186,7 @@ async def get_crypto_quote(symbol: str) -> dict | None:
     crypto = CRYPTO_MAP.get(symbol.upper())
     if not crypto:
         return None
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             f"{COINGECKO_BASE}/simple/price",
             params={
@@ -178,6 +196,10 @@ async def get_crypto_quote(symbol: str) -> dict | None:
                 "precision": "full",
             },
         )
+        if resp.status_code == 429:
+            # Rate limited — return stale cache if available, else None
+            stale = _price_cache.get(symbol)
+            return stale["data"] if stale else None
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -208,57 +230,79 @@ async def get_quote(symbol: str, asset_type: str) -> dict | None:
 
 async def get_stock_candles(symbol: str, days: int = 30) -> list[dict]:
     """Fetch historical daily candles from Finnhub."""
+    cache_key = f"stock_candle:{symbol.upper()}:{days}"
+    cached = _get_chart_cached(cache_key)
+    if cached is not None:
+        return cached
+
     settings = get_settings()
     now = int(datetime.now(timezone.utc).timestamp())
     start = now - (days * 86400)
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{FINNHUB_BASE}/stock/candle",
-            params={
-                "symbol": symbol.upper(),
-                "resolution": "D",
-                "from": start,
-                "to": now,
-                "token": settings.finnhub_api_key,
-            },
-        )
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-        if data.get("s") != "ok":
-            return []
-        candles = []
-        for i in range(len(data.get("t", []))):
-            candles.append({
-                "time": data["t"][i],
-                "open": data["o"][i],
-                "high": data["h"][i],
-                "low": data["l"][i],
-                "close": data["c"][i],
-            })
-        return candles
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{FINNHUB_BASE}/stock/candle",
+                params={
+                    "symbol": symbol.upper(),
+                    "resolution": "D",
+                    "from": start,
+                    "to": now,
+                    "token": settings.finnhub_api_key,
+                },
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            if data.get("s") != "ok":
+                return []
+            candles = []
+            for i in range(len(data.get("t", []))):
+                candles.append({
+                    "time": data["t"][i],
+                    "open": data["o"][i],
+                    "high": data["h"][i],
+                    "low": data["l"][i],
+                    "close": data["c"][i],
+                })
+            _set_chart_cached(cache_key, candles)
+            return candles
+    except httpx.TimeoutException:
+        return []
 
 
 async def get_crypto_history(symbol: str, days: int = 30) -> list[dict]:
     """Fetch historical daily prices from CoinGecko."""
+    cache_key = f"crypto_chart:{symbol.upper()}:{days}"
+    cached = _get_chart_cached(cache_key)
+    if cached is not None:
+        return cached
+
     crypto = CRYPTO_MAP.get(symbol.upper())
     if not crypto:
         return []
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{COINGECKO_BASE}/coins/{crypto['coingecko_id']}/market_chart",
-            params={"vs_currency": "usd", "days": days, "interval": "daily"},
-        )
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-        points = []
-        for ts, price in data.get("prices", []):
-            points.append({
-                "time": int(ts / 1000),
-                "close": price,
-            })
-        return points
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{COINGECKO_BASE}/coins/{crypto['coingecko_id']}/market_chart",
+                params={"vs_currency": "usd", "days": days, "interval": "daily"},
+            )
+            if resp.status_code in (429, 403):
+                # Rate limited — return stale chart cache if available
+                stale = _chart_cache.get(cache_key)
+                return stale["data"] if stale else []
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            points = []
+            for ts, price in data.get("prices", []):
+                points.append({
+                    "time": int(ts / 1000),
+                    "close": price,
+                })
+            _set_chart_cached(cache_key, points)
+            return points
+    except httpx.TimeoutException:
+        return []
 
 
 async def get_available_assets() -> dict:
