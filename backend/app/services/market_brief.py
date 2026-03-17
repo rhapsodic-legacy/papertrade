@@ -290,15 +290,22 @@ async def compile_market_brief() -> dict:
     # 5. Enrichment: fundamentals, analyst recs, earnings, technicals, crypto data
     # Only fetch fundamentals for top 20 stocks to stay under rate limits
     top_symbols = list(TOP_STOCKS.keys())[:20]
-    fundamentals = await _fetch_stock_fundamentals(
-        settings.finnhub_api_key, top_symbols
+
+    # Run Finnhub sequential calls (fundamentals, then analyst recs) in parallel
+    # with CoinGecko and cached-data calls (different APIs, no rate conflict)
+    async def _finnhub_enrichment():
+        funds = await _fetch_stock_fundamentals(settings.finnhub_api_key, top_symbols)
+        recs = await _fetch_analyst_recommendations(settings.finnhub_api_key, top_symbols)
+        earnings = await _fetch_upcoming_earnings(settings.finnhub_api_key)
+        return funds, recs, earnings
+
+    (fundamentals, analyst_recs, earnings_calendar), stock_technicals, crypto_market = (
+        await asyncio.gather(
+            _finnhub_enrichment(),
+            _compute_stock_technicals(top_symbols),
+            _fetch_crypto_market_data(),
+        )
     )
-    analyst_recs = await _fetch_analyst_recommendations(
-        settings.finnhub_api_key, top_symbols
-    )
-    earnings_calendar = await _fetch_upcoming_earnings(settings.finnhub_api_key)
-    stock_technicals = await _compute_stock_technicals(top_symbols)
-    crypto_market = await _fetch_crypto_market_data()
 
     brief = {
         "date": today.isoformat(),

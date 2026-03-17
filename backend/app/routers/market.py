@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, Query
+import asyncio
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.services.market_brief import compile_market_brief, get_latest_brief
 from app.services.market_data import (
@@ -68,16 +70,11 @@ async def market_status():
 
 
 @router.post("/brief/trigger")
-async def trigger_brief():
-    """Compile today's market brief. Call daily via cron before AI trading."""
-    brief = await compile_market_brief()
-    return {
-        "message": "Market brief compiled",
-        "date": brief["date"],
-        "stocks": len(brief["stocks"]),
-        "crypto": len(brief["crypto"]),
-        "news": len(brief["news"]),
-    }
+async def trigger_brief(background_tasks: BackgroundTasks):
+    """Compile today's market brief. Call daily via cron before AI trading.
+    Returns immediately; compilation runs in the background."""
+    background_tasks.add_task(asyncio.to_thread, _run_brief_sync)
+    return {"message": "Market brief compilation triggered — running in background"}
 
 
 @router.get("/brief")
@@ -87,3 +84,12 @@ async def latest_brief():
     if not brief:
         raise HTTPException(status_code=404, detail="No market brief available")
     return brief
+
+
+def _run_brief_sync():
+    """Wrapper to run the async brief compilation from a sync context."""
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(compile_market_brief())
+    finally:
+        loop.close()
