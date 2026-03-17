@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
-from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates
+from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
@@ -79,6 +79,16 @@ async def list_ai_traders():
             "personality": personality_key,
         })
     return {"traders": traders}
+
+
+@router.get("/traders/{trader_id}/commentary")
+async def get_trader_commentary_history(
+    trader_id: str,
+    limit: int = Query(30, ge=1, le=90),
+):
+    """Get full commentary history for a specific AI trader."""
+    entries = await get_trader_commentary(user_id=trader_id, limit=limit)
+    return {"entries": entries}
 
 
 @router.get("/traders/{trader_id}")

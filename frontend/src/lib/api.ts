@@ -300,7 +300,7 @@ class ApiClient {
   }
 
   // AI Commentary
-  async getCommentary(date?: string, limit = 10) {
+  async getCommentary(date?: string, limit = 50) {
     const params = new URLSearchParams();
     if (date) params.set("date", date);
     params.set("limit", String(limit));
@@ -309,6 +309,7 @@ class ApiClient {
         display_name: string;
         personality: string;
         model: string;
+        headline: string;
         commentary: string;
         trades_summary: {
           symbol: string;
@@ -325,6 +326,25 @@ class ApiClient {
     return this.request<{ dates: string[] }>(
       `/api/ai/commentary/dates?limit=${limit}`
     );
+  }
+
+  async getTraderCommentary(traderId: string, limit = 30) {
+    return this.request<{
+      entries: {
+        display_name: string;
+        personality: string;
+        model: string;
+        headline: string;
+        commentary: string;
+        trades_summary: {
+          symbol: string;
+          side: string;
+          quantity: number;
+          price: number;
+        }[];
+        date: string;
+      }[];
+    }>(`/api/ai/traders/${traderId}/commentary?limit=${limit}`);
   }
 
   // AI Traders

@@ -7,6 +7,8 @@ from app.services.ai_trader import (
     PERSONALITIES,
     MODELS,
     _call_gemini,
+    _call_mistral,
+    _call_cerebras,
     _get_ai_portfolio,
 )
 from app.services.supabase_client import get_supabase_admin
@@ -18,16 +20,20 @@ You will receive:
 2. Your trades from today (or that you had no trades)
 3. Your current portfolio
 
-Write a 2-4 paragraph commentary in the FIRST PERSON explaining:
-- What you did today and WHY (connect decisions to market conditions)
-- How you feel about your portfolio right now
-- What you're watching for tomorrow
+Write your response in EXACTLY this format:
+HEADLINE: <a short, punchy headline summarizing your day in 8 words or less>
 
-Style rules:
+<2-4 paragraphs of commentary>
+
+Commentary rules:
+- Write in the FIRST PERSON explaining what you did and WHY
+- Connect decisions to market conditions
+- Share how you feel about your portfolio
+- Mention what you are watching for tomorrow
 - Stay in character with your personality
 - Be conversational and engaging — this is a blog post, not a report
 - Use specific numbers (prices, quantities) when referencing your trades
-- Keep it under 250 words
+- Keep commentary under 250 words
 - Do NOT use markdown headers or bullet points — just flowing paragraphs
 - Do NOT start with "Today," — vary your openings
 """
@@ -122,15 +128,40 @@ Positions:
 Write your daily commentary blog post."""
 
             settings = get_settings()
-            if not settings.gemini_api_key:
-                raise Exception("GEMINI_API_KEY not configured")
+            api_type = model_cfg["api"]
 
-            raw = await _call_gemini(
-                model_cfg["model_id"],
-                COMMENTARY_SYSTEM,
-                user_msg,
-                settings.gemini_api_key,
-            )
+            if api_type == "gemini":
+                if not settings.gemini_api_key:
+                    raise Exception("GEMINI_API_KEY not configured")
+                raw = await _call_gemini(
+                    model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                    settings.gemini_api_key,
+                )
+            elif api_type == "mistral":
+                if not settings.mistral_api_key:
+                    raise Exception("MISTRAL_API_KEY not configured")
+                raw = await _call_mistral(
+                    model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                    settings.mistral_api_key,
+                )
+            elif api_type == "cerebras":
+                if not settings.cerebras_api_key:
+                    raise Exception("CEREBRAS_API_KEY not configured")
+                raw = await _call_cerebras(
+                    model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                    settings.cerebras_api_key,
+                )
+            else:
+                raise Exception(f"Unknown API: {api_type}")
+
+            # Parse headline from response
+            text = raw.strip()
+            headline = ""
+            commentary_body = text
+            if text.upper().startswith("HEADLINE:"):
+                parts = text.split("\n", 1)
+                headline = parts[0].replace("HEADLINE:", "").replace("Headline:", "").strip()
+                commentary_body = parts[1].strip() if len(parts) > 1 else text
 
             # Store commentary
             trades_summary = [
@@ -143,13 +174,16 @@ Write your daily commentary blog post."""
                 for t in trades
             ]
 
+            # Store headline as first line separated by a marker
+            stored_commentary = f"HEADLINE:{headline}\n{commentary_body}" if headline else commentary_body
+
             db.table("ai_commentary").insert({
                 "user_id": user_id,
                 "commentary_date": today.isoformat(),
                 "display_name": display_name,
                 "personality": personality_key,
                 "model": model_key,
-                "commentary": raw.strip(),
+                "commentary": stored_commentary,
                 "trades_summary": json.dumps(trades_summary),
             }).execute()
 
@@ -188,7 +222,7 @@ async def get_commentary(
     )
 
     if commentary_date:
-        query = query.eq("commentary_date", commentary_date)
+        query = query.eq("commentary_date", commentary_date).limit(50)
     else:
         query = query.order("commentary_date", desc=True).limit(limit)
 
@@ -199,11 +233,71 @@ async def get_commentary(
         trades_summary = row["trades_summary"]
         if isinstance(trades_summary, str):
             trades_summary = json.loads(trades_summary)
+
+        # Parse headline from stored commentary
+        commentary_text = row["commentary"]
+        headline = ""
+        if commentary_text.startswith("HEADLINE:"):
+            parts = commentary_text.split("\n", 1)
+            headline = parts[0].replace("HEADLINE:", "").strip()
+            commentary_text = parts[1].strip() if len(parts) > 1 else commentary_text
+        elif not headline:
+            # Fallback for old entries: use first sentence as headline
+            first_sentence = commentary_text.split(". ")[0]
+            if len(first_sentence) < 100:
+                headline = first_sentence.rstrip(".")
+
         entries.append({
             "display_name": row["display_name"],
             "personality": row["personality"],
             "model": row["model"],
-            "commentary": row["commentary"],
+            "headline": headline,
+            "commentary": commentary_text,
+            "trades_summary": trades_summary,
+            "date": row["commentary_date"],
+        })
+
+    return entries
+
+
+async def get_trader_commentary(
+    user_id: str,
+    limit: int = 30,
+) -> list[dict]:
+    """Fetch commentary history for a specific AI trader."""
+    db = get_supabase_admin()
+    resp = (
+        db.table("ai_commentary")
+        .select("display_name, personality, model, commentary, trades_summary, commentary_date")
+        .eq("user_id", user_id)
+        .order("commentary_date", desc=True)
+        .limit(limit)
+        .execute()
+    )
+
+    entries = []
+    for row in resp.data:
+        trades_summary = row["trades_summary"]
+        if isinstance(trades_summary, str):
+            trades_summary = json.loads(trades_summary)
+
+        commentary_text = row["commentary"]
+        headline = ""
+        if commentary_text.startswith("HEADLINE:"):
+            parts = commentary_text.split("\n", 1)
+            headline = parts[0].replace("HEADLINE:", "").strip()
+            commentary_text = parts[1].strip() if len(parts) > 1 else commentary_text
+        elif not headline:
+            first_sentence = commentary_text.split(". ")[0]
+            if len(first_sentence) < 100:
+                headline = first_sentence.rstrip(".")
+
+        entries.append({
+            "display_name": row["display_name"],
+            "personality": row["personality"],
+            "model": row["model"],
+            "headline": headline,
+            "commentary": commentary_text,
             "trades_summary": trades_summary,
             "date": row["commentary_date"],
         })
