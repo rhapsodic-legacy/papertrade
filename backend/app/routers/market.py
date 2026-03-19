@@ -69,6 +69,51 @@ async def market_status():
     }
 
 
+@router.get("/details/{asset_type}/{symbol}")
+async def asset_details(asset_type: str, symbol: str):
+    """Get enriched data for a single asset from the latest market brief.
+    Returns fundamentals, technicals, analyst consensus, earnings, or crypto
+    market data depending on asset type. Zero additional API cost."""
+    symbol = symbol.upper()
+    if asset_type == "stock" and symbol not in TOP_STOCKS:
+        raise HTTPException(status_code=400, detail=f"{symbol} not supported")
+    if asset_type == "crypto" and symbol not in CRYPTO_MAP:
+        raise HTTPException(status_code=400, detail=f"{symbol} not supported")
+
+    brief = await get_latest_brief()
+    if not brief:
+        return {"symbol": symbol, "asset_type": asset_type}
+
+    result: dict = {"symbol": symbol, "asset_type": asset_type}
+
+    if asset_type == "stock":
+        fundamentals = brief.get("fundamentals", {}).get(symbol)
+        if fundamentals:
+            result["fundamentals"] = fundamentals
+
+        technicals = brief.get("stock_technicals", {}).get(symbol)
+        if technicals:
+            result["technicals"] = technicals
+
+        analyst = brief.get("analyst_recommendations", {}).get(symbol)
+        if analyst:
+            result["analyst"] = analyst
+
+        # Check if this stock has upcoming earnings
+        earnings = brief.get("earnings_calendar", [])
+        for e in earnings:
+            if e.get("symbol") == symbol:
+                result["earnings"] = e
+                break
+
+    elif asset_type == "crypto":
+        crypto_data = brief.get("crypto_market_data", {}).get(symbol)
+        if crypto_data:
+            result["market_data"] = crypto_data
+
+    return result
+
+
 @router.post("/brief/trigger")
 async def trigger_brief(background_tasks: BackgroundTasks):
     """Compile today's market brief. Call daily via cron before AI trading.

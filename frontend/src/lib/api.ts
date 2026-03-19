@@ -169,6 +169,47 @@ class ApiClient {
     }>("/api/market/status");
   }
 
+  async getAssetDetails(assetType: string, symbol: string) {
+    return this.request<{
+      symbol: string;
+      asset_type: string;
+      fundamentals?: {
+        pe_ratio: number | null;
+        market_cap_m: number | null;
+        "52w_high": number | null;
+        "52w_low": number | null;
+        beta: number | null;
+        dividend_yield: number | null;
+      };
+      technicals?: {
+        sma_20?: number;
+        sma_50?: number;
+        vs_sma_20?: number;
+        vs_sma_50?: number;
+        rsi_14?: number;
+        "7d_return"?: number;
+        "30d_return"?: number;
+      };
+      analyst?: {
+        buy: number;
+        hold: number;
+        sell: number;
+      };
+      earnings?: {
+        symbol: string;
+        date: string | null;
+        estimate_eps: number | null;
+      };
+      market_data?: {
+        market_cap_rank: number | null;
+        market_cap_b: number | null;
+        volume_24h_m: number | null;
+        ath: number | null;
+        ath_drop_pct: number | null;
+      };
+    }>(`/api/market/details/${assetType}/${symbol}`);
+  }
+
   // Portfolio
   async getPortfolio() {
     return this.request<{
