@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request
 
+from app.services.analytics import get_portfolio_health
 from app.services.auth import get_user_id_from_token
 from app.services.leaderboard import get_scored_leaderboard
 from app.services.market_data import get_quote
@@ -115,6 +116,13 @@ async def get_portfolio_snapshots(request: Request, days: int = 30):
     )
 
     return resp.data
+
+
+@router.get("/health")
+async def portfolio_health(request: Request):
+    """Portfolio health score with AI comparison. Requires auth."""
+    user_id = get_user_id_from_token(request)
+    return await get_portfolio_health(user_id)
 
 
 @router.post("/snapshots/trigger")

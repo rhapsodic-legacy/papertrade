@@ -390,6 +390,311 @@ def _aggregate_group(group: list[dict]) -> dict:
     }
 
 
+async def get_portfolio_health(user_id: str) -> dict:
+    """Compute portfolio health score for a human trader, with AI comparison."""
+    db = get_supabase_admin()
+
+    tx_resp = (
+        db.table("transactions")
+        .select("symbol, asset_type, side, quantity, price, total, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    snap_resp = (
+        db.table("portfolio_snapshots")
+        .select("snapshot_date, total_value")
+        .eq("user_id", user_id)
+        .order("snapshot_date", desc=False)
+        .execute()
+    )
+    pos_resp = (
+        db.table("positions")
+        .select("symbol, asset_type, quantity, avg_cost_basis")
+        .eq("user_id", user_id)
+        .gt("quantity", 0)
+        .execute()
+    )
+
+    trade_metrics = _compute_trade_metrics(tx_resp.data)
+    risk_metrics = _compute_risk_metrics(snap_resp.data)
+    sector_exposure = await _compute_sector_exposure(pos_resp.data)
+    trade_history = _compute_trade_history(tx_resp.data)
+
+    score, grade, breakdown = _compute_health_score(
+        trade_metrics, risk_metrics, sector_exposure, len(snap_resp.data)
+    )
+
+    ai_comparison = await _get_ai_averages()
+    ai_rank = _compute_ai_rank(
+        risk_metrics["total_return_pct"], ai_comparison.get("all_returns", [])
+    )
+
+    return {
+        "score": score,
+        "grade": grade,
+        "score_breakdown": breakdown,
+        "metrics": {
+            **trade_metrics,
+            **risk_metrics,
+            "sector_exposure": sector_exposure,
+            "trade_history": trade_history,
+            "total_snapshots": len(snap_resp.data),
+        },
+        "ai_comparison": {
+            "avg_return_pct": ai_comparison.get("avg_return_pct", 0),
+            "avg_sharpe": ai_comparison.get("avg_sharpe", 0),
+            "avg_win_rate": ai_comparison.get("avg_win_rate", 0),
+            "avg_max_drawdown": ai_comparison.get("avg_max_drawdown", 0),
+            "avg_profit_factor": ai_comparison.get("avg_profit_factor", 0),
+            "total_ai_traders": ai_comparison.get("total_ai_traders", 0),
+            "user_beats_n": ai_rank["beats"],
+            "user_rank": ai_rank["rank"],
+        },
+    }
+
+
+def _compute_health_score(
+    trade_metrics: dict,
+    risk_metrics: dict,
+    sector_exposure: list[dict],
+    total_snapshots: int,
+) -> tuple[int, str, list[dict]]:
+    """Compute a 0-100 portfolio health score with letter grade.
+
+    Components (each 0-20):
+    1. Diversification — sector spread
+    2. Risk management — drawdown, volatility
+    3. Trading discipline — win rate, profit factor, sell ratio
+    4. Returns — total return
+    5. Activity — trading frequency
+    """
+    breakdown = []
+
+    # 1. Diversification (0-20)
+    n_sectors = len(sector_exposure)
+    max_sector_pct = sector_exposure[0]["pct"] if sector_exposure else 100
+    div_score = 0
+    if n_sectors >= 5:
+        div_score += 10
+    elif n_sectors >= 3:
+        div_score += 7
+    elif n_sectors >= 1:
+        div_score += 3
+    if max_sector_pct <= 30:
+        div_score += 10
+    elif max_sector_pct <= 50:
+        div_score += 6
+    elif max_sector_pct <= 70:
+        div_score += 3
+    div_score = min(div_score, 20)
+    breakdown.append({
+        "name": "Diversification",
+        "score": div_score,
+        "max": 20,
+        "tip": "Spread across 5+ sectors, no single sector >30%"
+            if div_score < 15
+            else "Well diversified across sectors",
+    })
+
+    # 2. Risk management (0-20)
+    max_dd = risk_metrics.get("max_drawdown_pct", 0)
+    vol = risk_metrics.get("annualized_volatility", 0)
+    risk_score = 20
+    if max_dd > 20:
+        risk_score -= 10
+    elif max_dd > 10:
+        risk_score -= 5
+    elif max_dd > 5:
+        risk_score -= 2
+    if vol > 40:
+        risk_score -= 8
+    elif vol > 25:
+        risk_score -= 4
+    elif vol > 15:
+        risk_score -= 1
+    risk_score = max(risk_score, 0)
+    breakdown.append({
+        "name": "Risk Management",
+        "score": risk_score,
+        "max": 20,
+        "tip": "Keep max drawdown <10% and volatility <25%"
+            if risk_score < 15
+            else "Solid risk control",
+    })
+
+    # 3. Trading discipline (0-20)
+    win_rate = trade_metrics.get("win_rate", 0)
+    profit_factor = trade_metrics.get("profit_factor", 0)
+    sell_count = trade_metrics.get("sell_count", 0)
+    buy_count = trade_metrics.get("buy_count", 0)
+    disc_score = 0
+    if win_rate >= 55:
+        disc_score += 7
+    elif win_rate >= 45:
+        disc_score += 5
+    elif win_rate > 0:
+        disc_score += 2
+    if profit_factor >= 1.5:
+        disc_score += 7
+    elif profit_factor >= 1.0:
+        disc_score += 5
+    elif profit_factor > 0:
+        disc_score += 2
+    if buy_count > 0 and sell_count > 0:
+        sell_ratio = sell_count / buy_count
+        if sell_ratio >= 0.3:
+            disc_score += 6
+        elif sell_ratio >= 0.1:
+            disc_score += 3
+    disc_score = min(disc_score, 20)
+    breakdown.append({
+        "name": "Trading Discipline",
+        "score": disc_score,
+        "max": 20,
+        "tip": "Take profits and cut losses — aim for >50% win rate"
+            if disc_score < 15
+            else "Strong buy/sell discipline",
+    })
+
+    # 4. Returns (0-20)
+    total_return = risk_metrics.get("total_return_pct", 0)
+    if total_return > 10:
+        ret_score = 20
+    elif total_return > 5:
+        ret_score = 16
+    elif total_return > 0:
+        ret_score = 12
+    elif total_return > -5:
+        ret_score = 8
+    elif total_return > -10:
+        ret_score = 4
+    else:
+        ret_score = 0
+    breakdown.append({
+        "name": "Returns",
+        "score": ret_score,
+        "max": 20,
+        "tip": "Aim for positive returns first, then beat the AI average"
+            if ret_score < 15
+            else "Strong returns",
+    })
+
+    # 5. Activity (0-20)
+    total_trades = trade_metrics.get("total_trades", 0)
+    act_score = 0
+    if total_trades >= 20:
+        act_score += 10
+    elif total_trades >= 10:
+        act_score += 7
+    elif total_trades >= 3:
+        act_score += 4
+    elif total_trades >= 1:
+        act_score += 2
+    if total_trades > 0 and total_snapshots > 0:
+        trades_per_day = total_trades / max(total_snapshots, 1)
+        if trades_per_day >= 0.5:
+            act_score += 10
+        elif trades_per_day >= 0.2:
+            act_score += 6
+        elif trades_per_day > 0:
+            act_score += 3
+    act_score = min(act_score, 20)
+    breakdown.append({
+        "name": "Activity",
+        "score": act_score,
+        "max": 20,
+        "tip": "Trade regularly — a few trades per week helps you learn"
+            if act_score < 15
+            else "Consistently active",
+    })
+
+    total_score = sum(b["score"] for b in breakdown)
+
+    if total_score >= 90:
+        grade = "A+"
+    elif total_score >= 80:
+        grade = "A"
+    elif total_score >= 70:
+        grade = "B+"
+    elif total_score >= 60:
+        grade = "B"
+    elif total_score >= 50:
+        grade = "C+"
+    elif total_score >= 40:
+        grade = "C"
+    elif total_score >= 30:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return total_score, grade, breakdown
+
+
+async def _get_ai_averages() -> dict:
+    """Compute average metrics across all AI traders for comparison."""
+    db = get_supabase_admin()
+    profiles_resp = (
+        db.table("profiles").select("id").eq("is_ai", True).execute()
+    )
+    if not profiles_resp.data:
+        return {"total_ai_traders": 0, "all_returns": []}
+
+    trader_ids = [p["id"] for p in profiles_resp.data]
+
+    tx_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, side, quantity, price")
+        .in_("user_id", trader_ids)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    snap_resp = (
+        db.table("portfolio_snapshots")
+        .select("user_id, snapshot_date, total_value")
+        .in_("user_id", trader_ids)
+        .order("snapshot_date", desc=False)
+        .execute()
+    )
+
+    tx_by_user: dict[str, list] = {}
+    for tx in tx_resp.data:
+        tx_by_user.setdefault(tx["user_id"], []).append(tx)
+    snap_by_user: dict[str, list] = {}
+    for s in snap_resp.data:
+        snap_by_user.setdefault(s["user_id"], []).append(s)
+
+    returns, sharpes, win_rates, drawdowns, profit_factors = [], [], [], [], []
+    for uid in trader_ids:
+        tm = _compute_trade_metrics(tx_by_user.get(uid, []))
+        rm = _compute_risk_metrics(snap_by_user.get(uid, []))
+        returns.append(rm["total_return_pct"])
+        sharpes.append(rm["sharpe_ratio"])
+        win_rates.append(tm["win_rate"])
+        drawdowns.append(rm["max_drawdown_pct"])
+        profit_factors.append(tm["profit_factor"])
+
+    n = len(trader_ids)
+    return {
+        "total_ai_traders": n,
+        "avg_return_pct": round(sum(returns) / n, 2) if n else 0,
+        "avg_sharpe": round(sum(sharpes) / n, 2) if n else 0,
+        "avg_win_rate": round(sum(win_rates) / n, 1) if n else 0,
+        "avg_max_drawdown": round(sum(drawdowns) / n, 2) if n else 0,
+        "avg_profit_factor": round(sum(profit_factors) / n, 2) if n else 0,
+        "all_returns": sorted(returns, reverse=True),
+    }
+
+
+def _compute_ai_rank(user_return: float, ai_returns: list[float]) -> dict:
+    """Where does the user rank among AI trader returns."""
+    if not ai_returns:
+        return {"rank": 0, "beats": 0}
+    beats = sum(1 for r in ai_returns if user_return > r)
+    rank = sum(1 for r in ai_returns if r > user_return) + 1
+    return {"rank": rank, "beats": beats}
+
+
 def _std(values: list[float]) -> float:
     """Standard deviation of a list of floats."""
     if len(values) < 2:

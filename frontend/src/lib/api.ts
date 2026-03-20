@@ -566,6 +566,52 @@ class ApiClient {
       }[];
     }>(`/api/ai/traders/${traderId}`);
   }
+
+  // Portfolio Health
+  async getPortfolioHealth() {
+    return this.request<{
+      score: number;
+      grade: string;
+      score_breakdown: {
+        name: string;
+        score: number;
+        max: number;
+        tip: string;
+      }[];
+      metrics: {
+        total_trades: number;
+        buy_count: number;
+        sell_count: number;
+        win_rate: number;
+        avg_win: number;
+        avg_loss: number;
+        largest_win: number;
+        largest_loss: number;
+        total_realized_pnl: number;
+        profit_factor: number;
+        sharpe_ratio: number;
+        max_drawdown_pct: number;
+        max_drawdown_date: string | null;
+        annualized_volatility: number;
+        current_drawdown_pct: number;
+        total_return_pct: number;
+        daily_returns: { date: string; total_value: number; return_pct: number }[];
+        sector_exposure: { sector: string; value: number; pct: number }[];
+        trade_history: { date: string; buys: number; sells: number; volume: number }[];
+        total_snapshots: number;
+      };
+      ai_comparison: {
+        avg_return_pct: number;
+        avg_sharpe: number;
+        avg_win_rate: number;
+        avg_max_drawdown: number;
+        avg_profit_factor: number;
+        total_ai_traders: number;
+        user_beats_n: number;
+        user_rank: number;
+      };
+    }>("/api/portfolio/health");
+  }
 }
 
 export const api = new ApiClient();
