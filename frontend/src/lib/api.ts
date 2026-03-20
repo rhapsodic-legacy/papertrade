@@ -567,6 +567,35 @@ class ApiClient {
     }>(`/api/ai/traders/${traderId}`);
   }
 
+  // AI Trade Feed (Learn from AI)
+  async getAiTradeFeed(filters?: {
+    personality?: string;
+    model?: string;
+    symbol?: string;
+    limit?: number;
+  }) {
+    const params = new URLSearchParams();
+    if (filters?.personality) params.set("personality", filters.personality);
+    if (filters?.model) params.set("model", filters.model);
+    if (filters?.symbol) params.set("symbol", filters.symbol);
+    if (filters?.limit) params.set("limit", String(filters.limit));
+    return this.request<{
+      trades: {
+        trader_name: string;
+        personality: string | null;
+        model: string | null;
+        symbol: string;
+        asset_type: string;
+        side: string;
+        quantity: number;
+        price: number;
+        total: number;
+        reasoning: string;
+        created_at: string;
+      }[];
+    }>(`/api/ai/trades/feed?${params.toString()}`);
+  }
+
   // Portfolio Health
   async getPortfolioHealth() {
     return this.request<{

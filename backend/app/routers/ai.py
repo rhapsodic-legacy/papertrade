@@ -61,6 +61,89 @@ async def list_commentary_dates(limit: int = Query(30, ge=1, le=90)):
     return {"dates": dates}
 
 
+@router.get("/trades/feed")
+async def ai_trade_feed(
+    personality: str | None = Query(None, description="Filter by personality key"),
+    model: str | None = Query(None, description="Filter by AI model"),
+    symbol: str | None = Query(None, description="Filter by symbol"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent AI trades with reasoning, for the Learn from AI page. No auth required."""
+    db = get_supabase_admin()
+
+    # Get all AI trader profiles
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+
+    # Build profile lookup with personality
+    profile_map = {}
+    for p in profiles_resp.data:
+        personality_key = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in p["display_name"]:
+                personality_key = pkey
+                break
+        profile_map[p["id"]] = {
+            "display_name": p["display_name"],
+            "ai_model": p["ai_model"],
+            "personality": personality_key,
+        }
+
+    # Filter trader IDs by personality/model if requested
+    trader_ids = list(profile_map.keys())
+    if personality:
+        trader_ids = [
+            uid for uid, info in profile_map.items()
+            if info["personality"] == personality
+        ]
+    if model:
+        trader_ids = [
+            uid for uid in trader_ids
+            if profile_map[uid]["ai_model"] and model.lower() in profile_map[uid]["ai_model"].lower()
+        ]
+
+    if not trader_ids:
+        return {"trades": []}
+
+    # Fetch recent transactions with reasoning
+    query = (
+        db.table("transactions")
+        .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning")
+        .in_("user_id", trader_ids)
+        .not_.is_("reasoning", "null")
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if symbol:
+        query = query.eq("symbol", symbol.upper())
+
+    trades_resp = query.execute()
+
+    # Enrich with trader info
+    trades = []
+    for t in trades_resp.data:
+        info = profile_map.get(t["user_id"], {})
+        trades.append({
+            "trader_name": info.get("display_name", "Unknown"),
+            "personality": info.get("personality"),
+            "model": info.get("ai_model"),
+            "symbol": t["symbol"],
+            "asset_type": t["asset_type"],
+            "side": t["side"],
+            "quantity": float(t["quantity"]),
+            "price": float(t["price"]),
+            "total": float(t["total"]),
+            "reasoning": t["reasoning"],
+            "created_at": t["created_at"],
+        })
+
+    return {"trades": trades}
+
+
 @router.get("/traders")
 async def list_ai_traders():
     """List all AI trader profiles. No auth required."""

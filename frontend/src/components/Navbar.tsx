@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { href: "/insights", label: "AI Insights" },
   { href: "/my-analytics", label: "My Analytics" },
   { href: "/analytics", label: "AI Analytics" },
+  { href: "/learn", label: "Learn from AI" },
   { href: "/how-it-works", label: "How It Works" },
 ];
 
