@@ -103,6 +103,38 @@ CRYPTO_MAP = {
     "RENDER": {"coingecko_id": "render-token", "name": "Render"},
 }
 
+# Sector classification (zero API cost — used for portfolio exposure analysis)
+STOCK_SECTORS = {
+    # Technology
+    "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology",
+    "AMZN": "Technology", "NVDA": "Technology", "META": "Technology",
+    "TSLA": "Technology", "NFLX": "Technology", "ADBE": "Technology",
+    "CRM": "Technology", "INTC": "Technology", "AMD": "Technology",
+    "ORCL": "Technology", "CSCO": "Technology", "QCOM": "Technology",
+    "AVGO": "Technology", "NOW": "Technology", "UBER": "Technology",
+    "SQ": "Technology", "SHOP": "Technology", "SNOW": "Technology",
+    "PLTR": "Technology", "TSM": "Technology", "BABA": "Technology",
+    "BIDU": "Technology", "INFY": "Technology", "SE": "Technology",
+    "GRAB": "Technology",
+    # Finance
+    "BRK.B": "Finance", "JPM": "Finance", "V": "Finance",
+    "MA": "Finance", "GS": "Finance", "BAC": "Finance", "HDB": "Finance",
+    # Healthcare
+    "JNJ": "Healthcare", "UNH": "Healthcare", "PFE": "Healthcare",
+    "ABBV": "Healthcare", "MRK": "Healthcare", "LLY": "Healthcare",
+    # Consumer
+    "WMT": "Consumer", "PG": "Consumer", "KO": "Consumer",
+    "PEP": "Consumer", "COST": "Consumer", "MCD": "Consumer",
+    "NKE": "Consumer", "SBUX": "Consumer", "DIS": "Consumer",
+    # Industrial / Energy
+    "HD": "Industrial", "BA": "Industrial", "CAT": "Industrial",
+    "XOM": "Energy", "CVX": "Energy",
+    # Automotive
+    "TM": "Consumer", "NIO": "Technology", "SONY": "Technology",
+    # ETFs (macro proxies)
+    "SPY": "ETF", "QQQ": "ETF", "IWM": "ETF", "GLD": "ETF", "TLT": "ETF",
+}
+
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 

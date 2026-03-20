@@ -1,4 +1,5 @@
 import asyncio
+import math
 import httpx
 from datetime import date, datetime, timedelta, timezone
 
@@ -6,8 +7,10 @@ from app.config import get_settings
 from app.services.market_data import (
     TOP_STOCKS,
     CRYPTO_MAP,
+    STOCK_SECTORS,
     get_quote,
     get_stock_candles,
+    get_crypto_history,
     FINNHUB_BASE,
     COINGECKO_BASE,
 )
@@ -70,6 +73,147 @@ def _derive_technicals(closes: list[float], current_price: float) -> dict:
         technicals["rsi_14"] = rsi
     technicals.update(momentum)
     return technicals
+
+
+# ---------------------------------------------------------------------------
+# Volatility and volume analysis (computed from candle data, zero API cost)
+# ---------------------------------------------------------------------------
+
+
+def _compute_historical_volatility(closes: list[float], period: int = 20) -> float | None:
+    """Annualized historical volatility from daily close prices.
+    Used by professionals to gauge risk — higher = more volatile."""
+    if len(closes) < period + 1:
+        return None
+    returns = [(closes[i] / closes[i - 1]) - 1 for i in range(-period, 0)]
+    if not returns:
+        return None
+    mean_r = sum(returns) / len(returns)
+    variance = sum((r - mean_r) ** 2 for r in returns) / len(returns)
+    daily_vol = math.sqrt(variance)
+    annualized = round(daily_vol * math.sqrt(252) * 100, 1)  # % annualized
+    return annualized
+
+
+def _compute_volume_analysis(candles: list[dict]) -> dict | None:
+    """Compare recent volume to 20-day average. High relative volume = conviction."""
+    if len(candles) < 21:
+        return None
+    volumes = [c.get("volume") or c.get("v", 0) for c in candles if c.get("volume") or c.get("v")]
+    if len(volumes) < 21:
+        return None
+    avg_20 = sum(volumes[-21:-1]) / 20
+    if avg_20 == 0:
+        return None
+    latest = volumes[-1]
+    return {
+        "latest_volume": latest,
+        "avg_20d_volume": round(avg_20),
+        "relative_volume": round(latest / avg_20, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Market regime detection (from ETF proxies — zero extra API cost)
+# ---------------------------------------------------------------------------
+
+async def _detect_market_regime(stock_technicals: dict) -> dict:
+    """Derive macro signals from ETF proxies already in our universe.
+    SPY = broad market, QQQ = tech/growth, TLT = bonds/rates, GLD = safe haven."""
+    regime = {}
+
+    # SPY — overall market direction
+    spy = stock_technicals.get("SPY", {})
+    if spy:
+        rsi = spy.get("rsi_14")
+        mom_7d = spy.get("7d_return", 0)
+        mom_30d = spy.get("30d_return", 0)
+        if rsi and rsi > 65 and mom_7d > 1:
+            regime["market_trend"] = "BULLISH"
+        elif rsi and rsi < 35 and mom_7d < -1:
+            regime["market_trend"] = "BEARISH"
+        else:
+            regime["market_trend"] = "NEUTRAL"
+        regime["spy_rsi"] = rsi
+        regime["spy_7d"] = mom_7d
+        regime["spy_30d"] = mom_30d
+
+    # QQQ vs SPY — growth vs value rotation
+    qqq = stock_technicals.get("QQQ", {})
+    if qqq and spy:
+        qqq_7d = qqq.get("7d_return", 0)
+        spy_7d = spy.get("7d_return", 0)
+        spread = round(qqq_7d - spy_7d, 2)
+        regime["growth_vs_value"] = "GROWTH_LEADING" if spread > 0.5 else "VALUE_LEADING" if spread < -0.5 else "BALANCED"
+        regime["qqq_spy_spread_7d"] = spread
+
+    # TLT — bond/rate signal (rising TLT = falling rates = risk-on for stocks)
+    tlt = stock_technicals.get("TLT", {})
+    if tlt:
+        tlt_7d = tlt.get("7d_return", 0)
+        regime["rate_signal"] = "RATES_FALLING" if tlt_7d > 0.5 else "RATES_RISING" if tlt_7d < -0.5 else "RATES_STABLE"
+        regime["tlt_7d"] = tlt_7d
+
+    # GLD — safe haven demand
+    gld = stock_technicals.get("GLD", {})
+    if gld:
+        gld_7d = gld.get("7d_return", 0)
+        regime["safe_haven_demand"] = "HIGH" if gld_7d > 1.0 else "LOW" if gld_7d < -0.5 else "NORMAL"
+        regime["gld_7d"] = gld_7d
+
+    # IWM — small cap health (leads economic cycles)
+    iwm = stock_technicals.get("IWM", {})
+    if iwm:
+        iwm_7d = iwm.get("7d_return", 0)
+        regime["small_cap_signal"] = "RISK_ON" if iwm_7d > 1.0 else "RISK_OFF" if iwm_7d < -1.0 else "NEUTRAL"
+        regime["iwm_7d"] = iwm_7d
+
+    return regime
+
+
+# ---------------------------------------------------------------------------
+# Sector performance aggregation (zero API cost)
+# ---------------------------------------------------------------------------
+
+def _compute_sector_performance(stock_quotes: list[dict]) -> dict[str, dict]:
+    """Aggregate stock performance by sector for rotation analysis."""
+    sector_data: dict[str, list[float]] = {}
+    for q in stock_quotes:
+        sector = STOCK_SECTORS.get(q["symbol"])
+        if not sector or sector == "ETF":
+            continue
+        pct = q.get("change_pct")
+        if pct is not None:
+            sector_data.setdefault(sector, []).append(pct)
+
+    result = {}
+    for sector, pcts in sector_data.items():
+        avg_pct = round(sum(pcts) / len(pcts), 2) if pcts else 0
+        result[sector] = {
+            "avg_change_pct": avg_pct,
+            "stocks_up": sum(1 for p in pcts if p > 0),
+            "stocks_down": sum(1 for p in pcts if p < 0),
+            "count": len(pcts),
+        }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Stock volatility batch computation (zero API cost — uses cached candles)
+# ---------------------------------------------------------------------------
+
+async def _compute_stock_volatility(symbols: list[str]) -> dict[str, float]:
+    """Compute 20-day annualized volatility for each stock."""
+    volatility = {}
+    for symbol in symbols:
+        candles = await get_stock_candles(symbol, days=60)
+        if not candles or len(candles) < 21:
+            continue
+        closes = [c["close"] for c in candles]
+        vol = _compute_historical_volatility(closes)
+        if vol is not None:
+            volatility[symbol] = vol
+    return volatility
 
 
 # ---------------------------------------------------------------------------
@@ -232,9 +376,127 @@ async def _compute_stock_technicals(symbols: list[str]) -> dict[str, dict]:
             continue
         closes = [c["close"] for c in candles]
         current_price = closes[-1]
-        technicals[symbol] = _derive_technicals(closes, current_price)
+        tech = _derive_technicals(closes, current_price)
+        # Add volume analysis if available (Finnhub candles include volume)
+        vol_analysis = _compute_volume_analysis(candles)
+        if vol_analysis:
+            tech["relative_volume"] = vol_analysis["relative_volume"]
+        technicals[symbol] = tech
         # Candles are already cached (1 hour), no rate limit concern
     return technicals
+
+
+async def _compute_crypto_technicals() -> dict[str, dict]:
+    """Compute technical indicators for crypto from CoinGecko history.
+    Uses the same _derive_technicals as stocks — zero extra API cost
+    since get_crypto_history caches for 1 hour."""
+    technicals = {}
+    for symbol in CRYPTO_MAP:
+        candles = await get_crypto_history(symbol, days=60)
+        if not candles or len(candles) < 14:
+            continue
+        closes = [c["close"] for c in candles]
+        current_price = closes[-1]
+        technicals[symbol] = _derive_technicals(closes, current_price)
+    # CoinGecko rate limit — add a small pause between symbols
+    return technicals
+
+
+# ---------------------------------------------------------------------------
+# Company-specific news (Finnhub — same free tier, 1 call per symbol)
+# ---------------------------------------------------------------------------
+
+async def _fetch_company_news(
+    api_key: str, symbols: list[str], max_per_symbol: int = 3
+) -> dict[str, list[dict]]:
+    """Fetch recent news for specific stocks. Useful for top movers.
+    Limits to 5 symbols to stay within rate limits."""
+    today = date.today()
+    week_ago = today - timedelta(days=7)
+    result = {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        for symbol in symbols[:5]:  # Max 5 to limit API calls
+            try:
+                resp = await client.get(
+                    f"{FINNHUB_BASE}/company-news",
+                    params={
+                        "symbol": symbol,
+                        "from": week_ago.isoformat(),
+                        "to": today.isoformat(),
+                        "token": api_key,
+                    },
+                )
+                if resp.status_code != 200:
+                    continue
+                articles = resp.json()
+                if articles:
+                    result[symbol] = [
+                        {
+                            "headline": a.get("headline", ""),
+                            "summary": a.get("summary", "")[:200],
+                        }
+                        for a in articles[:max_per_symbol]
+                    ]
+            except Exception:
+                continue
+            await asyncio.sleep(0.5)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Day-over-day context (compare with previous brief)
+# ---------------------------------------------------------------------------
+
+async def _get_previous_brief() -> dict | None:
+    """Get the second most recent market brief for day-over-day comparison."""
+    db = get_supabase_admin()
+    resp = (
+        db.table("market_briefs")
+        .select("brief_data")
+        .order("brief_date", desc=True)
+        .limit(2)
+        .execute()
+    )
+    if resp.data and len(resp.data) >= 2:
+        return resp.data[1]["brief_data"]
+    return None
+
+
+def _compute_day_over_day(current_brief: dict, previous_brief: dict) -> dict:
+    """Compute changes between today and yesterday's brief."""
+    dod = {}
+
+    # Market regime shift
+    curr_regime = current_brief.get("market_regime", {})
+    prev_regime = previous_brief.get("market_regime", {})
+    if curr_regime.get("market_trend") and prev_regime.get("market_trend"):
+        curr_trend = curr_regime["market_trend"]
+        prev_trend = prev_regime["market_trend"]
+        if curr_trend != prev_trend:
+            dod["regime_shift"] = f"{prev_trend} → {curr_trend}"
+        else:
+            dod["regime_shift"] = f"Still {curr_trend}"
+
+    # Sector rotation shift
+    curr_sectors = current_brief.get("sector_performance", {})
+    prev_sectors = previous_brief.get("sector_performance", {})
+    sector_changes = []
+    for sector in curr_sectors:
+        curr_avg = curr_sectors[sector].get("avg_change_pct", 0)
+        prev_avg = prev_sectors.get(sector, {}).get("avg_change_pct", 0)
+        if abs(curr_avg - prev_avg) > 0.5:  # Notable shift
+            direction = "improving" if curr_avg > prev_avg else "weakening"
+            sector_changes.append(f"{sector} {direction}")
+    if sector_changes:
+        dod["sector_shifts"] = sector_changes
+
+    # SPY day-over-day
+    prev_spy_7d = prev_regime.get("spy_7d")
+    curr_spy_7d = curr_regime.get("spy_7d")
+    if prev_spy_7d is not None and curr_spy_7d is not None:
+        dod["spy_momentum_change"] = round(curr_spy_7d - prev_spy_7d, 2)
+
+    return dod
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +569,23 @@ async def compile_market_brief() -> dict:
         )
     )
 
+    # 6. Crypto technicals (uses cached CoinGecko history — minimal API cost)
+    crypto_technicals = await _compute_crypto_technicals()
+
+    # 7. New enrichment: market regime, sector performance, volatility
+    # These are computed from data already fetched — zero additional API calls
+    market_regime = await _detect_market_regime(stock_technicals)
+    sector_performance = _compute_sector_performance(stock_quotes)
+    stock_volatility = await _compute_stock_volatility(top_symbols)
+
+    # 8. Company-specific news for today's top movers (5 API calls)
+    mover_symbols = [m["symbol"] for m in (movers_up[:3] + movers_down[:2])]
+    company_news = await _fetch_company_news(settings.finnhub_api_key, mover_symbols)
+
+    # 9. Day-over-day context
+    previous_brief = await _get_previous_brief()
+    day_over_day = None  # Will be computed after brief is assembled
+
     brief = {
         "date": today.isoformat(),
         "stocks": stock_quotes,
@@ -314,12 +593,21 @@ async def compile_market_brief() -> dict:
         "top_gainers": movers_up,
         "top_losers": movers_down,
         "news": news,
+        "company_news": company_news,
         "fundamentals": fundamentals,
         "analyst_recommendations": analyst_recs,
         "earnings_calendar": earnings_calendar,
         "stock_technicals": stock_technicals,
+        "crypto_technicals": crypto_technicals,
         "crypto_market_data": crypto_market,
+        "market_regime": market_regime,
+        "sector_performance": sector_performance,
+        "stock_volatility": stock_volatility,
     }
+
+    # Compute day-over-day after regime/sectors are set
+    if previous_brief:
+        brief["day_over_day"] = _compute_day_over_day(brief, previous_brief)
 
     # 6. Upsert into market_briefs table
     db = get_supabase_admin()

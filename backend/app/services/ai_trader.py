@@ -5,7 +5,7 @@ from datetime import date
 
 from app.config import get_settings
 from app.services.market_brief import get_latest_brief
-from app.services.market_data import get_quote, TOP_STOCKS, CRYPTO_MAP
+from app.services.market_data import get_quote, TOP_STOCKS, CRYPTO_MAP, STOCK_SECTORS
 from app.services.supabase_client import get_supabase_admin
 
 # ---------------------------------------------------------------------------
@@ -16,45 +16,77 @@ PERSONALITIES = {
     "vanilla": {
         "name": "Vanilla",
         "prompt": (
-            "You are an AI trader. Your only goal is to maximize portfolio returns. "
-            "Analyze the market data and make the best trading decisions you can. "
-            "No specific strategy — just make money."
+            "You are a balanced portfolio manager. Your goal is risk-adjusted returns. "
+            "Use fundamentals (PE ratio, analyst consensus) to find fairly valued stocks. "
+            "Use technicals (RSI, SMA trends) for entry/exit timing. "
+            "Monitor sector exposure — don't let any one sector exceed 40% of portfolio. "
+            "Check the market regime: reduce equity exposure if bearish, increase if bullish. "
+            "Keep 10-20% cash reserve for opportunities. Rebalance when positions drift."
         ),
     },
     "steady_eddie": {
         "name": "Steady Eddie",
         "prompt": (
-            "You are a conservative AI trader called Steady Eddie. "
-            "You prefer blue-chip stocks, diversification, and capital preservation. "
-            "You trade infrequently and avoid volatile assets. "
-            "You'd rather miss a rally than catch a crash."
+            "You are a conservative portfolio manager called Steady Eddie, modeled after "
+            "Warren Buffett's value investing philosophy. "
+            "BUY criteria: PE ratio below sector average, strong analyst buy consensus, "
+            "low beta (<1.0), dividend yield above 1%, RSI under 60. "
+            "SELL criteria: RSI above 75 (overbought), position exceeds 15% of portfolio, "
+            "analyst consensus shifts to majority sell. "
+            "AVOID: stocks with beta >1.5, crypto (limit to <5% of portfolio), "
+            "and any asset with annualized volatility >50%. "
+            "TARGET: 60% blue-chip stocks, 20% defensive (healthcare/consumer staples), "
+            "10% bonds (TLT), 10% cash. Rebalance toward targets each day. "
+            "When market regime is BEARISH, shift to 40% stocks / 30% TLT / 30% cash."
         ),
     },
     "yolo_bot": {
         "name": "YOLO Bot",
         "prompt": (
-            "You are an aggressive momentum trader called YOLO Bot. "
-            "You chase trends, trade frequently, and make concentrated bets. "
-            "You love volatility and aren't afraid of big swings. "
-            "Go big or go home."
+            "You are an aggressive momentum trader called YOLO Bot, inspired by "
+            "high-frequency trend-following strategies. "
+            "BUY criteria: 7d momentum >3%, RSI 50-75 (strong but not exhausted), "
+            "price above SMA20, relative volume spike, and analyst consensus bullish. "
+            "SELL criteria: RSI >80 (take profits), 7d momentum turns negative, "
+            "or price drops below SMA20. Cut losses fast — sell if position drops >8%. "
+            "STRATEGY: concentrate in top 3-5 momentum names. Ride winners, dump losers. "
+            "Check sector rotation — overweight the leading sector. "
+            "When market regime is BULLISH, go 90% invested in highest-momentum assets. "
+            "When BEARISH, pivot to short-term crypto plays (24/7 trading advantage) "
+            "and reduce stock exposure. Keep <5% cash — YOLO."
         ),
     },
     "contrarian_carl": {
         "name": "Contrarian Carl",
         "prompt": (
-            "You are a contrarian AI trader called Contrarian Carl. "
-            "You buy when the market is fearful and sell when it's greedy. "
-            "You look for oversold stocks to buy and overbought ones to sell. "
-            "If everyone is bullish, you get cautious. If everyone is panicking, you buy."
+            "You are a contrarian value investor called Contrarian Carl, inspired by "
+            "Michael Burry and mean-reversion strategies. "
+            "BUY criteria: RSI <30 (oversold), 7d return <-5% (panic selling), "
+            "PE ratio below historical norms, analyst consensus mixed (not all sell). "
+            "SELL criteria: RSI >70 (overextended recovery), 30d return >15% (mean reached), "
+            "or position hits >20% profit. "
+            "KEY SIGNALS: When market regime is BEARISH and safe_haven_demand is HIGH — "
+            "this is your prime buying zone. Buy quality stocks that got dragged down. "
+            "When market regime is BULLISH and RSI is high everywhere — take profits, "
+            "build cash for the next downturn. "
+            "TARGET: hold 15-25% cash as dry powder. Diversify across 6-10 positions. "
+            "Never chase momentum — let it come to you."
         ),
     },
     "crypto_chad": {
         "name": "Crypto Chad",
         "prompt": (
-            "You are a crypto-focused AI trader called Crypto Chad. "
-            "You strongly favor cryptocurrency over stocks. "
-            "You follow crypto sentiment, narrative cycles, and momentum. "
-            "You believe in the long-term potential of digital assets."
+            "You are a crypto-native trader called Crypto Chad, inspired by "
+            "on-chain analysts and narrative cycle trading. "
+            "ALLOCATION: 60-80% crypto, 10-20% tech stocks (correlated growth), 10-20% cash. "
+            "BUY criteria: coins with market_cap_rank <20 (established), distance from ATH >30% "
+            "(upside potential), 7d momentum positive, and Bitcoin RSI >40 (not in death spiral). "
+            "SELL criteria: ATH distance <5% (near top), RSI >80, or if BTC breaks below SMA50. "
+            "STRATEGY: Bitcoin is the tide — when BTC is bullish, altcoins rally harder. "
+            "When BTC is bearish, reduce ALL crypto exposure and park in stablecoins or GLD. "
+            "Watch the growth_vs_value signal: when GROWTH_LEADING, tech and crypto thrive. "
+            "Layer positions: core BTC/ETH (40%), mid-cap alts (30%), small-cap momentum (30%). "
+            "Use rate signals: RATES_FALLING = risk-on, good for crypto. RATES_RISING = cautious."
         ),
     },
 }
@@ -97,31 +129,47 @@ AI_TRADERS = [
 
 # Trade decision prompt shared across all AIs
 TRADE_SYSTEM = """\
-You are managing a paper trading portfolio. You will receive:
-1. Your personality/strategy description
-2. Today's market brief (prices, movers, news, fundamentals, technicals)
-3. Your current portfolio (cash + positions)
-4. Your recent trading history and performance
+You are a professional portfolio manager running a paper trading portfolio.
 
-Use ALL the data provided to make informed decisions:
-- Fundamentals (PE ratio, market cap, analyst consensus) tell you about valuation
-- Technicals (RSI, SMA, momentum) tell you about price trends and timing
-- Earnings calendar warns you about upcoming volatility events
-- Your past trade results tell you what's been working or failing
+## Data You Will Receive
+1. Your personality/strategy description with specific BUY/SELL criteria
+2. Market regime analysis (bullish/bearish, growth vs value rotation, rate direction, safe haven demand)
+3. Sector performance breakdown (which sectors are leading/lagging today)
+4. Stock fundamentals (PE ratio, beta, dividend yield, 52-week range, market cap)
+5. Technical indicators (RSI, SMA 20/50 trends, 7d/30d momentum, volatility)
+6. Analyst consensus (buy/hold/sell counts from Wall Street)
+7. Earnings calendar (upcoming catalysts — can cause 5-20% swings)
+8. Crypto market data (rank, market cap, volume, distance from all-time high)
+9. News headlines with summaries (market-moving events)
+10. Your current portfolio with sector exposure and risk metrics
+11. Your recent trading history and what's working/failing
 
-Rules:
+## Professional Decision Framework
+Follow this checklist for EVERY trade decision:
+
+1. CHECK MACRO FIRST: What is the market regime? Adjust overall exposure accordingly.
+2. CHECK SECTOR ROTATION: Which sectors are leading? Favor leaders, reduce laggards.
+3. EVALUATE ENTRY/EXIT: Use your personality's specific BUY/SELL criteria.
+   - For buys: Is the valuation reasonable (PE, analyst view)? Is the timing right (RSI, SMA)?
+   - For sells: Has the thesis played out? Has it hit your exit criteria?
+4. POSITION SIZING: Scale position size by conviction AND volatility.
+   - High volatility (>40% annualized) → smaller position (2-5% of portfolio)
+   - Low volatility (<25%) → larger position (5-10% of portfolio)
+   - Never let one position exceed 15% of total portfolio value.
+5. RISK MANAGEMENT: Check your portfolio's sector concentration and adjust if needed.
+6. LEARN FROM HISTORY: Review what worked and what didn't in your recent trades.
+
+## Rules
 - You can buy or sell stocks and crypto from the supported list only.
 - You cannot spend more cash than you have.
 - You cannot sell more shares/coins than you own.
 - Each trade needs: symbol, asset_type ("stock" or "crypto"), side ("buy" or "sell"), quantity (number).
 - For stocks, quantity must be a whole number >= 1.
 - For crypto, quantity can be a decimal (minimum 0.001).
-- Crypto markets are open 24/7 — you can always trade crypto regardless of day or time.
-- Stock markets are only open Mon-Fri, but you can still place stock trades here anytime.
-- You MUST make at least 1 trade every day. This is paper trading with fake money — there is zero risk. Not trading is the worst outcome.
-- Maximum 5 trades per day.
-- Think about position sizing — don't put everything into one trade.
-- If you have no positions yet, buy something! Spread across 3-5 assets.
+- Crypto markets are open 24/7. Stock markets are Mon-Fri, but you can place trades anytime.
+- You MUST make at least 1 trade every day. This is paper trading — there is zero risk. Not trading is the worst outcome.
+- Maximum 8 trades per day (enough to rebalance: sell overweight positions + buy new ones).
+- If you have no positions yet, build an initial portfolio of 4-6 assets matching your strategy.
 
 Respond ONLY with valid JSON in this exact format, no other text:
 {"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10}]}
@@ -315,7 +363,7 @@ def _get_ai_trade_history(db, user_id: str, limit: int = 15) -> list[dict]:
 def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
     """Format recent trades and P&L into a readable memory section."""
     if not trades:
-        return "No trading history yet. This is your first day."
+        return "No trading history yet. This is your first day — build an initial portfolio."
 
     lines = ["Recent trades (newest first):"]
     for t in trades[:10]:
@@ -324,15 +372,29 @@ def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
             f"  {day}: {t['side'].upper()} {t['quantity']} {t['symbol']} @ ${t['price']:,.2f}"
         )
 
-    # Summarize position P&L
+    # Summarize position P&L with actionable context
     if positions:
-        lines.append("\nCurrent position performance:")
+        winners = []
+        losers = []
         for p in positions:
-            pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100
-            direction = "up" if pnl_pct >= 0 else "down"
-            lines.append(
-                f"  {p['symbol']}: {direction} {abs(pnl_pct):.1f}% (bought avg ${p['avg_cost']:,.2f}, now ${p['current_price']:,.2f})"
-            )
+            pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100 if p["avg_cost"] > 0 else 0
+            entry = (p["symbol"], pnl_pct, p["avg_cost"], p["current_price"])
+            if pnl_pct >= 0:
+                winners.append(entry)
+            else:
+                losers.append(entry)
+
+        if winners:
+            winners.sort(key=lambda x: x[1], reverse=True)
+            lines.append("\n✓ Winners (consider taking partial profits on big gainers):")
+            for sym, pnl, avg, cur in winners:
+                lines.append(f"  {sym}: +{pnl:.1f}% (avg ${avg:,.2f} → ${cur:,.2f})")
+
+        if losers:
+            losers.sort(key=lambda x: x[1])
+            lines.append("\n✗ Losers (consider cutting losses >10% or averaging down if thesis intact):")
+            for sym, pnl, avg, cur in losers:
+                lines.append(f"  {sym}: {pnl:.1f}% (avg ${avg:,.2f} → ${cur:,.2f})")
 
     return "\n".join(lines)
 
@@ -341,12 +403,56 @@ def _format_enriched_brief(brief: dict) -> str:
     """Format the enriched market brief sections for the AI prompt."""
     sections = []
 
-    # Fundamentals for notable stocks
+    # Market Regime (new — macro context)
+    regime = brief.get("market_regime", {})
+    if regime:
+        regime_lines = []
+        if "market_trend" in regime:
+            spy_rsi = regime.get('spy_rsi')
+            spy_7d = regime.get('spy_7d')
+            spy_30d = regime.get('spy_30d')
+            parts = [f"Overall Market: {regime['market_trend']}"]
+            detail = []
+            if spy_rsi is not None:
+                detail.append(f"SPY RSI={spy_rsi}")
+            if spy_7d is not None:
+                detail.append(f"7d={spy_7d:+.1f}%")
+            if spy_30d is not None:
+                detail.append(f"30d={spy_30d:+.1f}%")
+            if detail:
+                parts[0] += f" ({', '.join(detail)})"
+            regime_lines.append(f"  {parts[0]}")
+        if "growth_vs_value" in regime:
+            regime_lines.append(f"  Rotation: {regime['growth_vs_value']} (QQQ-SPY spread: {regime.get('qqq_spy_spread_7d', 0):+.1f}%)")
+        if "rate_signal" in regime:
+            regime_lines.append(f"  Interest Rates: {regime['rate_signal']} (TLT 7d: {regime.get('tlt_7d', 0):+.1f}%)")
+        if "safe_haven_demand" in regime:
+            regime_lines.append(f"  Safe Haven Demand: {regime['safe_haven_demand']} (GLD 7d: {regime.get('gld_7d', 0):+.1f}%)")
+        if "small_cap_signal" in regime:
+            regime_lines.append(f"  Small Cap Health: {regime['small_cap_signal']} (IWM 7d: {regime.get('iwm_7d', 0):+.1f}%)")
+        if regime_lines:
+            sections.append("### MARKET REGIME (read this first — it sets the context)\n" + "\n".join(regime_lines))
+
+    # Sector Performance (new — rotation signals)
+    sector_perf = brief.get("sector_performance", {})
+    if sector_perf:
+        sorted_sectors = sorted(sector_perf.items(), key=lambda x: x[1]["avg_change_pct"], reverse=True)
+        sector_lines = []
+        for sector, data in sorted_sectors:
+            sector_lines.append(
+                f"  {sector}: {data['avg_change_pct']:+.2f}% avg ({data['stocks_up']} up / {data['stocks_down']} down)"
+            )
+        sections.append("### SECTOR PERFORMANCE (today's rotation)\n" + "\n".join(sector_lines))
+
+    # Fundamentals for stocks (enhanced with volatility and sector)
     fundamentals = brief.get("fundamentals", {})
+    volatility = brief.get("stock_volatility", {})
     if fundamentals:
         fund_lines = []
-        for sym, f in list(fundamentals.items())[:15]:
+        for sym, f in list(fundamentals.items())[:20]:
             parts = []
+            sector = STOCK_SECTORS.get(sym, "?")
+            parts.append(f"[{sector}]")
             if f.get("pe_ratio"):
                 parts.append(f"PE {f['pe_ratio']:.1f}")
             if f.get("beta"):
@@ -355,66 +461,220 @@ def _format_enriched_brief(brief: dict) -> str:
                 parts.append(f"Div {f['dividend_yield']:.1f}%")
             if f.get("52w_high") and f.get("52w_low"):
                 parts.append(f"52w ${f['52w_low']:.0f}-${f['52w_high']:.0f}")
-            if parts:
+            if f.get("market_cap_m"):
+                mcap = f["market_cap_m"]
+                if mcap > 1000:
+                    parts.append(f"MCap ${mcap/1000:.0f}B")
+                else:
+                    parts.append(f"MCap ${mcap:.0f}M")
+            vol = volatility.get(sym)
+            if vol:
+                vol_label = "HIGH" if vol > 40 else "LOW" if vol < 20 else ""
+                parts.append(f"Vol {vol}%{' ' + vol_label if vol_label else ''}")
+            if len(parts) > 1:  # more than just sector
                 fund_lines.append(f"  {sym}: {', '.join(parts)}")
         if fund_lines:
-            sections.append("### Stock Fundamentals\n" + "\n".join(fund_lines))
+            sections.append("### Stock Fundamentals & Risk\n" + "\n".join(fund_lines))
 
     # Analyst recommendations
     recs = brief.get("analyst_recommendations", {})
     if recs:
         rec_lines = []
-        for sym, r in list(recs.items())[:15]:
+        for sym, r in list(recs.items())[:20]:
             total = r["buy"] + r["hold"] + r["sell"]
             if total > 0:
+                buy_pct = round(r["buy"] / total * 100)
+                signal = "STRONG BUY" if buy_pct > 70 else "MOSTLY BUY" if buy_pct > 50 else "MIXED" if r["hold"] > r["sell"] else "BEARISH"
                 rec_lines.append(
-                    f"  {sym}: {r['buy']} Buy / {r['hold']} Hold / {r['sell']} Sell"
+                    f"  {sym}: {r['buy']} Buy / {r['hold']} Hold / {r['sell']} Sell → {signal}"
                 )
         if rec_lines:
             sections.append("### Analyst Consensus\n" + "\n".join(rec_lines))
 
-    # Earnings calendar
+    # Earnings calendar (enhanced with EPS estimates)
     earnings = brief.get("earnings_calendar", [])
     if earnings:
-        earn_lines = [f"  {e['symbol']} reports {e['date']}" for e in earnings[:10]]
+        earn_lines = []
+        for e in earnings[:10]:
+            eps_str = f" (est EPS ${e['estimate_eps']:.2f})" if e.get("estimate_eps") else ""
+            earn_lines.append(f"  ⚠ {e['symbol']} reports {e['date']}{eps_str} — expect volatility")
         sections.append("### Upcoming Earnings (next 7 days)\n" + "\n".join(earn_lines))
 
-    # Technical indicators
+    # Technical indicators (enhanced with volume and more context)
     technicals = brief.get("stock_technicals", {})
     if technicals:
         tech_lines = []
-        for sym, t in list(technicals.items())[:15]:
+        for sym, t in list(technicals.items())[:20]:
             parts = []
             if "rsi_14" in t:
-                label = "OVERBOUGHT" if t["rsi_14"] > 70 else "OVERSOLD" if t["rsi_14"] < 30 else ""
-                parts.append(f"RSI {t['rsi_14']}{' ' + label if label else ''}")
+                rsi = t["rsi_14"]
+                label = "⚠ OVERBOUGHT" if rsi > 70 else "✓ OVERSOLD" if rsi < 30 else ""
+                parts.append(f"RSI {rsi}{' ' + label if label else ''}")
             if "vs_sma_20" in t:
-                parts.append(f"{'above' if t['vs_sma_20'] > 0 else 'below'} SMA20 by {abs(t['vs_sma_20']):.1f}%")
+                direction = "above" if t["vs_sma_20"] > 0 else "below"
+                parts.append(f"{direction} SMA20 by {abs(t['vs_sma_20']):.1f}%")
+            if "vs_sma_50" in t:
+                direction = "above" if t["vs_sma_50"] > 0 else "below"
+                parts.append(f"{direction} SMA50 by {abs(t['vs_sma_50']):.1f}%")
             if "7d_return" in t:
                 parts.append(f"7d {t['7d_return']:+.1f}%")
+            if "30d_return" in t:
+                parts.append(f"30d {t['30d_return']:+.1f}%")
+            if "relative_volume" in t:
+                rv = t["relative_volume"]
+                vol_label = "⚡ HIGH VOLUME" if rv > 1.5 else "LOW VOLUME" if rv < 0.5 else ""
+                parts.append(f"RelVol {rv:.1f}x{' ' + vol_label if vol_label else ''}")
             if parts:
                 tech_lines.append(f"  {sym}: {', '.join(parts)}")
         if tech_lines:
-            sections.append("### Technical Indicators\n" + "\n".join(tech_lines))
+            sections.append("### Stock Technical Indicators\n" + "\n".join(tech_lines))
 
-    # Crypto market data
+    # Crypto technicals (NEW — RSI, SMA, momentum for crypto)
+    crypto_tech = brief.get("crypto_technicals", {})
+    if crypto_tech:
+        ctech_lines = []
+        for sym, t in list(crypto_tech.items())[:15]:
+            parts = []
+            if "rsi_14" in t:
+                rsi = t["rsi_14"]
+                label = "⚠ OVERBOUGHT" if rsi > 70 else "✓ OVERSOLD" if rsi < 30 else ""
+                parts.append(f"RSI {rsi}{' ' + label if label else ''}")
+            if "vs_sma_20" in t:
+                direction = "above" if t["vs_sma_20"] > 0 else "below"
+                parts.append(f"{direction} SMA20 by {abs(t['vs_sma_20']):.1f}%")
+            if "vs_sma_50" in t:
+                direction = "above" if t["vs_sma_50"] > 0 else "below"
+                parts.append(f"{direction} SMA50 by {abs(t['vs_sma_50']):.1f}%")
+            if "7d_return" in t:
+                parts.append(f"7d {t['7d_return']:+.1f}%")
+            if "30d_return" in t:
+                parts.append(f"30d {t['30d_return']:+.1f}%")
+            if parts:
+                ctech_lines.append(f"  {sym}: {', '.join(parts)}")
+        if ctech_lines:
+            sections.append("### Crypto Technical Indicators\n" + "\n".join(ctech_lines))
+
+    # Crypto market data (fundamentals)
     crypto_data = brief.get("crypto_market_data", {})
     if crypto_data:
         crypto_lines = []
-        for sym, c in list(crypto_data.items())[:10]:
+        for sym, c in list(crypto_data.items())[:15]:
             parts = []
             if c.get("market_cap_rank"):
                 parts.append(f"Rank #{c['market_cap_rank']}")
             if c.get("market_cap_b"):
                 parts.append(f"MCap ${c['market_cap_b']}B")
+            if c.get("volume_24h_m"):
+                parts.append(f"24h Vol ${c['volume_24h_m']}M")
             if c.get("ath_drop_pct") is not None:
-                parts.append(f"{c['ath_drop_pct']}% below ATH")
+                pct = c["ath_drop_pct"]
+                label = "NEAR ATH" if pct < 10 else "BIG DISCOUNT" if pct > 50 else ""
+                parts.append(f"{pct}% below ATH{' — ' + label if label else ''}")
             if parts:
                 crypto_lines.append(f"  {sym}: {', '.join(parts)}")
         if crypto_lines:
             sections.append("### Crypto Market Data\n" + "\n".join(crypto_lines))
 
+    # Company-specific news for top movers (NEW)
+    company_news = brief.get("company_news", {})
+    if company_news:
+        news_lines = []
+        for sym, articles in company_news.items():
+            for a in articles:
+                summary = f" — {a['summary']}" if a.get("summary") else ""
+                news_lines.append(f"  {sym}: {a['headline']}{summary}")
+        if news_lines:
+            sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
+
+    # Day-over-day context (NEW — regime/sector shifts from yesterday)
+    dod = brief.get("day_over_day", {})
+    if dod:
+        dod_lines = []
+        if "regime_shift" in dod:
+            dod_lines.append(f"  Market regime: {dod['regime_shift']}")
+        if "spy_momentum_change" in dod:
+            change = dod["spy_momentum_change"]
+            direction = "accelerating" if change > 0 else "decelerating"
+            dod_lines.append(f"  SPY momentum {direction} ({change:+.2f}% shift)")
+        if "sector_shifts" in dod:
+            for shift in dod["sector_shifts"]:
+                dod_lines.append(f"  {shift}")
+        if dod_lines:
+            sections.append("### DAY-OVER-DAY CHANGES (vs yesterday)\n" + "\n".join(dod_lines))
+
     return "\n\n".join(sections) if sections else ""
+
+
+def _compute_portfolio_risk(portfolio: dict) -> str:
+    """Compute portfolio risk metrics: sector exposure, concentration, unrealized P&L.
+    This gives AIs the self-awareness to manage risk like a professional."""
+    positions = portfolio.get("positions", [])
+    cash = portfolio.get("cash", 0)
+
+    if not positions:
+        return "No positions — you need to build a portfolio. Diversify across sectors."
+
+    total_value = cash + sum(p["market_value"] for p in positions)
+    if total_value == 0:
+        return "Portfolio value is zero."
+
+    lines = []
+
+    # Cash allocation
+    cash_pct = round(cash / total_value * 100, 1)
+    lines.append(f"Cash allocation: {cash_pct}% (${cash:,.2f})")
+
+    # Position concentration
+    position_pcts = []
+    for p in sorted(positions, key=lambda x: x["market_value"], reverse=True):
+        pct = round(p["market_value"] / total_value * 100, 1)
+        pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100 if p["avg_cost"] > 0 else 0
+        position_pcts.append((p["symbol"], pct, pnl_pct, p["asset_type"]))
+
+    lines.append("\nPosition weights:")
+    for sym, pct, pnl, atype in position_pcts:
+        flag = " ⚠ CONCENTRATED" if pct > 15 else ""
+        lines.append(f"  {sym} ({atype}): {pct}% of portfolio, P&L {pnl:+.1f}%{flag}")
+
+    # Sector exposure
+    sector_exposure: dict[str, float] = {}
+    crypto_exposure = 0.0
+    for p in positions:
+        if p["asset_type"] == "crypto":
+            crypto_exposure += p["market_value"]
+        else:
+            sector = STOCK_SECTORS.get(p["symbol"], "Other")
+            sector_exposure[sector] = sector_exposure.get(sector, 0) + p["market_value"]
+
+    lines.append("\nSector exposure:")
+    all_sectors = {**sector_exposure}
+    if crypto_exposure > 0:
+        all_sectors["Crypto"] = crypto_exposure
+    for sector, value in sorted(all_sectors.items(), key=lambda x: x[1], reverse=True):
+        pct = round(value / total_value * 100, 1)
+        flag = " ⚠ OVERWEIGHT" if pct > 40 else ""
+        lines.append(f"  {sector}: {pct}%{flag}")
+
+    # Overall P&L
+    total_invested_cost = sum(p["avg_cost"] * p["quantity"] for p in positions)
+    total_market_value = sum(p["market_value"] for p in positions)
+    if total_invested_cost > 0:
+        overall_pnl = ((total_market_value / total_invested_cost) - 1) * 100
+        lines.append(f"\nOverall unrealized P&L: {overall_pnl:+.1f}%")
+
+    return "\n".join(lines)
+
+
+def _format_stocks_by_sector() -> str:
+    """Format supported stocks grouped by sector for the AI prompt."""
+    by_sector: dict[str, list[str]] = {}
+    for sym, name in TOP_STOCKS.items():
+        sector = STOCK_SECTORS.get(sym, "Other")
+        by_sector.setdefault(sector, []).append(f"{sym} ({name})")
+    lines = []
+    for sector in sorted(by_sector.keys()):
+        lines.append(f"  {sector}: {', '.join(by_sector[sector])}")
+    return "\n".join(lines)
 
 
 async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "") -> list[dict]:
@@ -424,15 +684,28 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
     model_cfg = MODELS[model_key]
 
     # Build the user message
-    supported_stocks = [{"symbol": s, "name": n} for s, n in TOP_STOCKS.items()]
     supported_crypto = [{"symbol": s, "name": c["name"]} for s, c in CRYPTO_MAP.items()]
 
     enriched_sections = _format_enriched_brief(brief)
+
+    # Format news with summaries (not just headlines)
+    news_items = brief.get("news", [])[:10]
+    news_text = "\n".join(
+        f"  • {n['headline']}\n    {n.get('summary', '')[:200]}"
+        if n.get("summary")
+        else f"  • {n['headline']}"
+        for n in news_items
+    ) if news_items else "  No news available."
+
+    # Portfolio risk analysis
+    risk_analysis = _compute_portfolio_risk(portfolio)
 
     user_msg = f"""## Your Strategy
 {personality['prompt']}
 
 ## Today's Market Brief ({brief.get('date', 'today')})
+
+{enriched_sections}
 
 ### Top Gainers
 {json.dumps(brief.get('top_gainers', []), indent=2)}
@@ -440,26 +713,28 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
 ### Top Losers
 {json.dumps(brief.get('top_losers', []), indent=2)}
 
-### Market News Headlines
-{json.dumps([n['headline'] for n in brief.get('news', [])[:10]], indent=2)}
+### Market News (headlines + context)
+{news_text}
 
-{enriched_sections}
-
-### Supported Stocks
-{json.dumps(supported_stocks, indent=2)}
+### Supported Stocks (by sector)
+{_format_stocks_by_sector()}
 
 ### Supported Crypto
 {json.dumps(supported_crypto, indent=2)}
 
 ## Your Current Portfolio
 Cash: ${portfolio['cash']:,.2f}
+Total Value: ${portfolio['cash'] + sum(p['market_value'] for p in portfolio['positions']):,.2f}
 Positions:
 {json.dumps(portfolio['positions'], indent=2) if portfolio['positions'] else 'None — you have no positions yet.'}
+
+## Portfolio Risk Analysis
+{risk_analysis}
 
 ## Your Trading Memory
 {trade_memory}
 
-What trades do you want to make today?"""
+Based on ALL the data above, what trades do you want to make today? Follow your strategy's BUY/SELL criteria."""
 
     # Call the right API
     api = model_cfg["api"]
@@ -491,7 +766,7 @@ What trades do you want to make today?"""
         trades = parsed.get("trades", [])
         if not isinstance(trades, list):
             return []
-        return trades[:5]  # Max 5 trades
+        return trades[:8]  # Max 8 trades (allows rebalancing)
     except json.JSONDecodeError:
         return []
 
@@ -596,8 +871,102 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
 # Daily AI trading run
 # ---------------------------------------------------------------------------
 
+# Provider-specific rate limit delays (seconds between calls).
+# These are tuned for free tier limits:
+#   Gemini Pro: 2 RPM → 35s   |  Gemini Flash: 15 RPM → 5s
+#   Mistral: generous → 3s    |  Cerebras: generous → 3s
+PROVIDER_DELAYS = {
+    "gemini-pro": 35,
+    "gemini-flash": 5,
+    "mistral": 3,
+    "llama": 3,
+}
+
+
+async def _run_trader(
+    db, brief: dict, profile: dict
+) -> dict:
+    """Run a single AI trader: get portfolio, ask LLM, execute trades."""
+    user_id = profile["id"]
+    display_name = profile["display_name"]
+    model_key = profile.get("ai_model", "")
+
+    # Determine personality from display name
+    personality_key = None
+    for pkey, pinfo in PERSONALITIES.items():
+        if pinfo["name"] in display_name:
+            personality_key = pkey
+            break
+
+    if not personality_key or model_key not in MODELS:
+        return {
+            "trader": display_name,
+            "status": "skipped",
+            "reason": "unknown personality or model",
+        }
+
+    try:
+        # Get portfolio state
+        portfolio = await _get_ai_portfolio(db, user_id)
+
+        # Build trading memory from recent history
+        recent_trades = _get_ai_trade_history(db, user_id, limit=15)
+        trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
+
+        # Ask AI for trades
+        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory)
+
+        # Execute trades
+        executed = []
+        for trade in trades:
+            result = await _execute_ai_trade(user_id, trade)
+            if result:
+                executed.append({
+                    "symbol": trade["symbol"],
+                    "side": trade["side"],
+                    "quantity": trade["quantity"],
+                })
+
+        return {
+            "trader": display_name,
+            "status": "ok",
+            "trades_proposed": len(trades),
+            "trades_executed": len(executed),
+            "trades": executed,
+        }
+
+    except Exception as e:
+        return {
+            "trader": display_name,
+            "status": "error",
+            "error": str(e)[:200],
+        }
+
+
+async def _run_provider_batch(
+    db, brief: dict, profiles: list[dict], delay: int
+) -> list[dict]:
+    """Run a batch of traders that share the same API provider, sequentially
+    with the appropriate delay between calls."""
+    results = []
+    for i, profile in enumerate(profiles):
+        result = await _run_trader(db, brief, profile)
+        results.append(result)
+        # Delay between calls (skip after last one)
+        if i < len(profiles) - 1:
+            await asyncio.sleep(delay)
+    return results
+
+
 async def run_ai_trading() -> dict:
-    """Run all AI traders for today. Returns summary."""
+    """Run all AI traders for today, grouped by API provider for optimal speed.
+
+    Old approach: 20 traders × 35s = ~12 min (one-size-fits-all delay).
+    New approach: group by provider, use provider-specific delays, run
+    Mistral and Cerebras in parallel with each other (different APIs).
+
+    Estimated time: ~4 min (dominated by 5 Gemini Pro calls × 35s).
+    """
     brief = await get_latest_brief()
     if not brief:
         return {"error": "No market brief available. Run /api/market/brief/trigger first."}
@@ -615,70 +984,55 @@ async def run_ai_trading() -> dict:
     if not ai_profiles.data:
         return {"error": "No AI traders found. Run /api/ai/setup first."}
 
-    results = []
+    # Group profiles by model key (= API provider)
+    by_model: dict[str, list[dict]] = {}
     for profile in ai_profiles.data:
-        user_id = profile["id"]
-        display_name = profile["display_name"]
-        model_key = profile.get("ai_model", "")
+        model_key = profile.get("ai_model", "unknown")
+        by_model.setdefault(model_key, []).append(profile)
 
-        # Determine personality from display name
-        personality_key = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in display_name:
-                personality_key = pkey
-                break
+    # Run Gemini Pro first (slowest — 35s between calls, bottleneck)
+    # Then run Gemini Flash (same API, different rate limit — must be sequential with Pro)
+    # Meanwhile, Mistral and Cerebras use different APIs and can run in parallel
+    all_results = []
 
-        if not personality_key or model_key not in MODELS:
-            results.append({
-                "trader": display_name,
-                "status": "skipped",
-                "reason": "unknown personality or model",
-            })
-            continue
+    # Phase 1: Gemini calls (must be sequential — same API key)
+    gemini_pro = by_model.pop("gemini-pro", [])
+    gemini_flash = by_model.pop("gemini-flash", [])
 
-        try:
-            # Get portfolio state
-            portfolio = await _get_ai_portfolio(db, user_id)
+    # Phase 2: Non-Gemini calls (can run in parallel with each other)
+    non_gemini_batches = []
+    for model_key, profiles in by_model.items():
+        delay = PROVIDER_DELAYS.get(model_key, 5)
+        non_gemini_batches.append(
+            _run_provider_batch(db, brief, profiles, delay)
+        )
 
-            # Build trading memory from recent history
-            recent_trades = _get_ai_trade_history(db, user_id, limit=15)
-            trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
+    # Run Gemini (sequential) in parallel with all non-Gemini providers
+    async def _run_all_gemini():
+        results = []
+        if gemini_pro:
+            results.extend(
+                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"])
+            )
+        if gemini_flash:
+            results.extend(
+                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"])
+            )
+        return results
 
-            # Ask AI for trades
-            trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory)
+    # Gather: Gemini batch + all non-Gemini batches run concurrently
+    gathered = await asyncio.gather(
+        _run_all_gemini(),
+        *non_gemini_batches,
+    )
 
-            # Execute trades
-            executed = []
-            for trade in trades:
-                result = await _execute_ai_trade(user_id, trade)
-                if result:
-                    executed.append({
-                        "symbol": trade["symbol"],
-                        "side": trade["side"],
-                        "quantity": trade["quantity"],
-                    })
-
-            results.append({
-                "trader": display_name,
-                "status": "ok",
-                "trades_proposed": len(trades),
-                "trades_executed": len(executed),
-                "trades": executed,
-            })
-
-        except Exception as e:
-            results.append({
-                "trader": display_name,
-                "status": "error",
-                "error": str(e)[:200],
-            })
-
-        # Rate limit: Gemini Pro allows 2 RPM, Flash 15 RPM.
-        # 35s delay keeps us safe for Pro (< 2 per minute).
-        await asyncio.sleep(35)
+    # Flatten results
+    for batch_result in gathered:
+        if isinstance(batch_result, list):
+            all_results.extend(batch_result)
 
     return {
         "date": brief.get("date", date.today().isoformat()),
-        "traders_processed": len(results),
-        "results": results,
+        "traders_processed": len(all_results),
+        "results": all_results,
     }
