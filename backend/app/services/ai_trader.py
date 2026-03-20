@@ -1,7 +1,10 @@
 import asyncio
 import json
+import logging
 import httpx
 from datetime import date
+
+logger = logging.getLogger(__name__)
 
 from app.config import get_settings
 from app.services.market_brief import get_latest_brief
@@ -111,7 +114,7 @@ MODELS = {
     "llama": {
         "label": "Llama",
         "api": "cerebras",
-        "model_id": "llama-3.3-70b",
+        "model_id": "gpt-oss-120b",
     },
 }
 
@@ -979,6 +982,7 @@ async def _run_trader(
         }
 
     except Exception as e:
+        logger.error("Trader %s failed: %s", display_name, e)
         return {
             "trader": display_name,
             "status": "error",
@@ -1074,9 +1078,17 @@ async def run_ai_trading(session: str = "close") -> dict:
         if isinstance(batch_result, list):
             all_results.extend(batch_result)
 
+    # Auto-snapshot all portfolios after trading completes
+    try:
+        from app.services.snapshots import take_all_snapshots
+        snapshot_count = await take_all_snapshots()
+    except Exception:
+        snapshot_count = 0
+
     return {
         "date": brief.get("date", date.today().isoformat()),
         "session": session,
         "traders_processed": len(all_results),
+        "snapshots_created": snapshot_count,
         "results": all_results,
     }

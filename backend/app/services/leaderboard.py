@@ -90,6 +90,10 @@ async def get_scored_leaderboard(
         if current is None:
             current = STARTING_BALANCE
 
+        # Find earliest snapshot for this user (fallback when period data missing)
+        sorted_dates = sorted(snaps.keys()) if snaps else []
+        earliest_value = snaps[sorted_dates[0]] if sorted_dates else None
+
         period_returns = {}
         weighted_score = 0.0
         for period in PERIODS:
@@ -97,6 +101,9 @@ async def get_scored_leaderboard(
             past = _find_closest(snaps, target_date, window=3)
             if past is not None and past > 0:
                 ret = (current - past) / past * 100
+            elif earliest_value is not None and earliest_value > 0:
+                # Use inception return when period-specific data unavailable
+                ret = (current - earliest_value) / earliest_value * 100
             else:
                 ret = ai_period_averages.get(period, 0.0)
             period_returns[period] = round(ret, 2)
