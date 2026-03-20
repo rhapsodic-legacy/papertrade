@@ -26,6 +26,13 @@ PERSONALITIES = {
             "Check the market regime: reduce equity exposure if bearish, increase if bullish. "
             "Keep 10-20% cash reserve for opportunities. Rebalance when positions drift."
         ),
+        "risk_params": {
+            "stop_loss_pct": -8.0,
+            "take_profit_pct": 15.0,
+            "max_position_pct": 15.0,
+            "max_hold_days": 30,
+            "min_sells_with_positions": 1,
+        },
     },
     "steady_eddie": {
         "name": "Steady Eddie",
@@ -42,6 +49,13 @@ PERSONALITIES = {
             "10% bonds (TLT), 10% cash. Rebalance toward targets each day. "
             "When market regime is BEARISH, shift to 40% stocks / 30% TLT / 30% cash."
         ),
+        "risk_params": {
+            "stop_loss_pct": -6.0,
+            "take_profit_pct": 12.0,
+            "max_position_pct": 12.0,
+            "max_hold_days": 45,
+            "min_sells_with_positions": 1,
+        },
     },
     "yolo_bot": {
         "name": "YOLO Bot",
@@ -58,6 +72,13 @@ PERSONALITIES = {
             "When BEARISH, pivot to short-term crypto plays (24/7 trading advantage) "
             "and reduce stock exposure. Keep <5% cash — YOLO."
         ),
+        "risk_params": {
+            "stop_loss_pct": -5.0,
+            "take_profit_pct": 10.0,
+            "max_position_pct": 20.0,
+            "max_hold_days": 14,
+            "min_sells_with_positions": 1,
+        },
     },
     "contrarian_carl": {
         "name": "Contrarian Carl",
@@ -75,6 +96,13 @@ PERSONALITIES = {
             "TARGET: hold 15-25% cash as dry powder. Diversify across 6-10 positions. "
             "Never chase momentum — let it come to you."
         ),
+        "risk_params": {
+            "stop_loss_pct": -10.0,
+            "take_profit_pct": 20.0,
+            "max_position_pct": 15.0,
+            "max_hold_days": 60,
+            "min_sells_with_positions": 1,
+        },
     },
     "crypto_chad": {
         "name": "Crypto Chad",
@@ -91,6 +119,13 @@ PERSONALITIES = {
             "Layer positions: core BTC/ETH (40%), mid-cap alts (30%), small-cap momentum (30%). "
             "Use rate signals: RATES_FALLING = risk-on, good for crypto. RATES_RISING = cautious."
         ),
+        "risk_params": {
+            "stop_loss_pct": -12.0,
+            "take_profit_pct": 25.0,
+            "max_position_pct": 20.0,
+            "max_hold_days": 21,
+            "min_sells_with_positions": 1,
+        },
     },
 }
 
@@ -144,23 +179,38 @@ You are a professional portfolio manager running a paper trading portfolio.
 7. Earnings calendar (upcoming catalysts — can cause 5-20% swings)
 8. Crypto market data (rank, market cap, volume, distance from all-time high)
 9. News headlines with summaries (market-moving events)
-10. Your current portfolio with sector exposure and risk metrics
+10. Your current portfolio with sector exposure, risk metrics, and RISK ALERTS
 11. Your recent trading history and what's working/failing
 
 ## Professional Decision Framework
 Follow this checklist for EVERY trade decision:
 
-1. CHECK MACRO FIRST: What is the market regime? Adjust overall exposure accordingly.
-2. CHECK SECTOR ROTATION: Which sectors are leading? Favor leaders, reduce laggards.
-3. EVALUATE ENTRY/EXIT: Use your personality's specific BUY/SELL criteria.
+1. CHECK RISK ALERTS FIRST: If the Portfolio Risk Analysis contains 🚨 MANDATORY RISK ACTIONS, \
+you MUST include sells to address them. Ignoring risk alerts is a critical failure. \
+Stop-losses protect capital. Take-profits lock in gains. Both are non-negotiable.
+2. CHECK MACRO: What is the market regime? Adjust overall exposure accordingly.
+3. CHECK SECTOR ROTATION: Which sectors are leading? Favor leaders, reduce laggards.
+4. EVALUATE ENTRY/EXIT: Use your personality's specific BUY/SELL criteria.
    - For buys: Is the valuation reasonable (PE, analyst view)? Is the timing right (RSI, SMA)?
    - For sells: Has the thesis played out? Has it hit your exit criteria?
-4. POSITION SIZING: Scale position size by conviction AND volatility.
+5. POSITION SIZING: Scale position size by conviction AND volatility.
    - High volatility (>40% annualized) → smaller position (2-5% of portfolio)
    - Low volatility (<25%) → larger position (5-10% of portfolio)
    - Never let one position exceed 15% of total portfolio value.
-5. RISK MANAGEMENT: Check your portfolio's sector concentration and adjust if needed.
-6. LEARN FROM HISTORY: Review what worked and what didn't in your recent trades.
+6. RISK MANAGEMENT: Check your portfolio's sector concentration and adjust if needed.
+7. LEARN FROM HISTORY: Review what worked and what didn't in your recent trades.
+
+## Sell Discipline (CRITICAL)
+Professional traders sell as much as they buy. You MUST sell when:
+- A position hits your stop-loss threshold (cut losses, preserve capital)
+- A position hits your take-profit threshold (lock in gains before they evaporate)
+- A position exceeds your max weight % (trim to maintain diversification)
+- A position has been stale too long with minimal return (redeploy capital)
+- Market regime shifts against your holdings (reduce exposure)
+
+If you have 3+ positions, at least 1 of your trades today MUST be a sell. \
+Portfolios that only buy become bloated and unmanageable. Active management means \
+actively trimming, rotating, and rebalancing — not just accumulating.
 
 ## Rules
 - You can buy or sell stocks and crypto from the supported list only.
@@ -280,11 +330,39 @@ async def _get_ai_portfolio(db, user_id: str) -> dict:
         .execute()
     )
 
+    # Get first buy date per symbol to compute hold duration
+    first_buys: dict[str, str] = {}
+    if positions_resp.data:
+        symbols = [p["symbol"] for p in positions_resp.data]
+        tx_resp = (
+            db.table("transactions")
+            .select("symbol, created_at")
+            .eq("user_id", user_id)
+            .eq("side", "buy")
+            .in_("symbol", symbols)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        for tx in tx_resp.data:
+            if tx["symbol"] not in first_buys:
+                first_buys[tx["symbol"]] = tx["created_at"][:10]
+
+    today = date.today()
     positions = []
     for p in positions_resp.data:
         quote = await get_quote(p["symbol"], p["asset_type"])
         current_price = quote["price"] if quote else float(p["avg_cost_basis"])
         qty = float(p["quantity"])
+
+        # Compute hold days from first buy
+        hold_days = 0
+        if p["symbol"] in first_buys:
+            try:
+                first_date = date.fromisoformat(first_buys[p["symbol"]])
+                hold_days = (today - first_date).days
+            except ValueError:
+                pass
+
         positions.append({
             "symbol": p["symbol"],
             "asset_type": p["asset_type"],
@@ -292,6 +370,7 @@ async def _get_ai_portfolio(db, user_id: str) -> dict:
             "avg_cost": float(p["avg_cost_basis"]),
             "current_price": current_price,
             "market_value": round(qty * current_price, 2),
+            "hold_days": hold_days,
         })
 
     return {"cash": cash, "positions": positions}
@@ -639,9 +718,10 @@ def _format_enriched_brief(brief: dict) -> str:
     return "\n\n".join(sections) if sections else ""
 
 
-def _compute_portfolio_risk(portfolio: dict) -> str:
+def _compute_portfolio_risk(portfolio: dict, personality_key: str = None) -> str:
     """Compute portfolio risk metrics: sector exposure, concentration, unrealized P&L.
-    This gives AIs the self-awareness to manage risk like a professional."""
+    This gives AIs the self-awareness to manage risk like a professional.
+    When personality_key is provided, includes risk rule alerts."""
     positions = portfolio.get("positions", [])
     cash = portfolio.get("cash", 0)
 
@@ -652,23 +732,62 @@ def _compute_portfolio_risk(portfolio: dict) -> str:
     if total_value == 0:
         return "Portfolio value is zero."
 
+    # Get risk params for this personality
+    risk_params = None
+    if personality_key and personality_key in PERSONALITIES:
+        risk_params = PERSONALITIES[personality_key].get("risk_params", {})
+
     lines = []
+    sell_alerts = []
 
     # Cash allocation
     cash_pct = round(cash / total_value * 100, 1)
     lines.append(f"Cash allocation: {cash_pct}% (${cash:,.2f})")
 
-    # Position concentration
+    # Position concentration + risk alerts
     position_pcts = []
     for p in sorted(positions, key=lambda x: x["market_value"], reverse=True):
         pct = round(p["market_value"] / total_value * 100, 1)
         pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100 if p["avg_cost"] > 0 else 0
-        position_pcts.append((p["symbol"], pct, pnl_pct, p["asset_type"]))
+        hold_days = p.get("hold_days", 0)
+        position_pcts.append((p["symbol"], pct, pnl_pct, p["asset_type"], hold_days))
 
     lines.append("\nPosition weights:")
-    for sym, pct, pnl, atype in position_pcts:
-        flag = " ⚠ CONCENTRATED" if pct > 15 else ""
-        lines.append(f"  {sym} ({atype}): {pct}% of portfolio, P&L {pnl:+.1f}%{flag}")
+    for sym, pct, pnl, atype, hold_days in position_pcts:
+        flags = []
+        if pct > 15:
+            flags.append("CONCENTRATED")
+        if risk_params:
+            stop_loss = risk_params.get("stop_loss_pct", -10)
+            take_profit = risk_params.get("take_profit_pct", 20)
+            max_pos = risk_params.get("max_position_pct", 15)
+            max_days = risk_params.get("max_hold_days", 30)
+
+            if pnl <= stop_loss:
+                flags.append("STOP-LOSS HIT")
+                sell_alerts.append(
+                    f"🔴 SELL {sym}: down {pnl:.1f}% (stop-loss trigger at {stop_loss}%). Cut this loss NOW."
+                )
+            elif pnl >= take_profit:
+                flags.append("TAKE-PROFIT HIT")
+                sell_alerts.append(
+                    f"🟢 SELL {sym}: up {pnl:.1f}% (take-profit trigger at +{take_profit}%). Lock in this gain."
+                )
+            if pct > max_pos:
+                flags.append("OVERWEIGHT")
+                sell_alerts.append(
+                    f"⚠ TRIM {sym}: {pct}% of portfolio (max allowed: {max_pos}%). Reduce position size."
+                )
+            if hold_days > max_days and abs(pnl) < 3:
+                flags.append("STALE")
+                sell_alerts.append(
+                    f"⏰ REVIEW {sym}: held {hold_days} days with only {pnl:+.1f}% return. "
+                    f"Consider selling to free up capital (max hold: {max_days} days)."
+                )
+
+        flag_str = f" ⚠ {', '.join(flags)}" if flags else ""
+        age_str = f", held {hold_days}d" if hold_days > 0 else ""
+        lines.append(f"  {sym} ({atype}): {pct}% of portfolio, P&L {pnl:+.1f}%{age_str}{flag_str}")
 
     # Sector exposure
     sector_exposure: dict[str, float] = {}
@@ -695,6 +814,19 @@ def _compute_portfolio_risk(portfolio: dict) -> str:
     if total_invested_cost > 0:
         overall_pnl = ((total_market_value / total_invested_cost) - 1) * 100
         lines.append(f"\nOverall unrealized P&L: {overall_pnl:+.1f}%")
+
+    # Sell alerts section
+    if sell_alerts:
+        lines.append("\n" + "=" * 50)
+        lines.append("🚨 MANDATORY RISK ACTIONS (you MUST address these):")
+        lines.append("=" * 50)
+        for alert in sell_alerts:
+            lines.append(alert)
+        lines.append(
+            f"\nYou have {len(sell_alerts)} risk alert(s). "
+            "Your trades MUST include sells to address these alerts. "
+            "Ignoring risk alerts violates your trading mandate."
+        )
 
     return "\n".join(lines)
 
@@ -731,12 +863,25 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
         for n in news_items
     ) if news_items else "  No news available."
 
-    # Portfolio risk analysis
-    risk_analysis = _compute_portfolio_risk(portfolio)
+    # Portfolio risk analysis (with personality-specific risk alerts)
+    risk_analysis = _compute_portfolio_risk(portfolio, personality_key)
+
+    # Format risk rules for this personality
+    risk_params = personality.get("risk_params", {})
+    risk_rules_text = ""
+    if risk_params:
+        risk_rules_text = f"""
+## Your Risk Rules (ENFORCED)
+- Stop-loss: sell any position down {risk_params.get('stop_loss_pct', -10)}% or more
+- Take-profit: sell any position up +{risk_params.get('take_profit_pct', 20)}% or more
+- Max position size: {risk_params.get('max_position_pct', 15)}% of portfolio
+- Max hold period: {risk_params.get('max_hold_days', 30)} days for stale positions (<3% move)
+- If you have 3+ positions, include at least 1 sell in your trades today
+"""
 
     user_msg = f"""## Your Strategy
 {personality['prompt']}
-
+{risk_rules_text}
 ## Today's Market Brief ({brief.get('date', 'today')})
 
 {enriched_sections}
@@ -768,7 +913,8 @@ Positions:
 ## Your Trading Memory
 {trade_memory}
 
-Based on ALL the data above, what trades do you want to make today? Follow your strategy's BUY/SELL criteria."""
+Based on ALL the data above, what trades do you want to make today? \
+Address any MANDATORY RISK ACTIONS first, then follow your strategy's BUY/SELL criteria."""
 
     # Build system prompt with optional session context
     system_prompt = TRADE_SYSTEM
