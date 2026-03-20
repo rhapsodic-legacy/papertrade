@@ -400,6 +400,134 @@ class ApiClient {
     }>("/api/ai/traders");
   }
 
+  // Analytics
+  async getTraderAnalytics(traderId: string) {
+    return this.request<{
+      trader: {
+        id: string;
+        display_name: string;
+        ai_model: string | null;
+        is_ai: boolean;
+      };
+      analytics: {
+        total_trades: number;
+        buy_count: number;
+        sell_count: number;
+        win_rate: number;
+        avg_win: number;
+        avg_loss: number;
+        largest_win: number;
+        largest_loss: number;
+        total_realized_pnl: number;
+        profit_factor: number;
+        sharpe_ratio: number;
+        max_drawdown_pct: number;
+        max_drawdown_date: string | null;
+        annualized_volatility: number;
+        current_drawdown_pct: number;
+        total_return_pct: number;
+        daily_returns: { date: string; total_value: number; return_pct: number }[];
+        sector_exposure: { sector: string; value: number; pct: number }[];
+        trade_history: { date: string; buys: number; sells: number; volume: number }[];
+        total_snapshots: number;
+      };
+    }>(`/api/analytics/trader/${traderId}`);
+  }
+
+  async getAiComparison() {
+    return this.request<{
+      traders: {
+        id: string;
+        display_name: string;
+        model: string;
+        personality: string;
+        win_rate: number;
+        total_trades: number;
+        total_realized_pnl: number;
+        profit_factor: number;
+        sharpe_ratio: number;
+        max_drawdown_pct: number;
+        total_return_pct: number;
+        annualized_volatility: number;
+      }[];
+      by_model: Record<string, {
+        count: number;
+        avg_win_rate: number;
+        avg_return_pct: number;
+        avg_sharpe: number;
+        avg_max_drawdown: number;
+        avg_profit_factor: number;
+        total_trades: number;
+        best_trader: string;
+        worst_trader: string;
+      }>;
+      by_personality: Record<string, {
+        count: number;
+        avg_win_rate: number;
+        avg_return_pct: number;
+        avg_sharpe: number;
+        avg_max_drawdown: number;
+        avg_profit_factor: number;
+        total_trades: number;
+        best_trader: string;
+        worst_trader: string;
+      }>;
+    }>("/api/analytics/comparison");
+  }
+
+  async getBenchmark(days = 90) {
+    return this.request<{
+      period_days: number;
+      start_date: string;
+      end_date: string;
+      benchmark: {
+        symbol: string;
+        return_pct: number;
+        start_price: number;
+        end_price: number;
+        series: { date: string; return_pct: number }[];
+      };
+      traders: {
+        id: string;
+        display_name: string;
+        model: string;
+        personality: string;
+        total_return_pct: number;
+        beats_spy: boolean;
+        alpha: number;
+        series: { date: string; return_pct: number }[];
+      }[];
+      summary: {
+        total_traders: number;
+        beating_spy: number;
+        losing_to_spy: number;
+        avg_alpha: number;
+        best_trader: string | null;
+        worst_trader: string | null;
+      };
+    }>(`/api/analytics/benchmark?days=${days}`);
+  }
+
+  async getEnhancementComparison() {
+    return this.request<{
+      enhancement_date: string;
+      traders: {
+        display_name: string;
+        model: string;
+        personality: string;
+        pre_enhancement: { days: number; total_return_pct: number; daily_return_avg: number; start_value: number; end_value: number };
+        post_enhancement: { days: number; total_return_pct: number; daily_return_avg: number; start_value: number; end_value: number };
+        improved: boolean | null;
+      }[];
+      summary: {
+        total_traders: number;
+        with_both_periods: number;
+        improved: number;
+        not_improved: number;
+      };
+    }>("/api/analytics/enhancement");
+  }
+
   async getAiTraderProfile(traderId: string) {
     return this.request<{
       display_name: string;
@@ -425,6 +553,7 @@ class ApiClient {
         price: number;
         total: number;
         created_at: string;
+        reasoning: string | null;
       }[];
       commentary: {
         commentary: string;

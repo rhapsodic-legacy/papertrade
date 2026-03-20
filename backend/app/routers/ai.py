@@ -23,11 +23,17 @@ async def setup_ai_traders():
 
 
 @router.post("/trade/trigger")
-async def trigger_ai_trading(background_tasks: BackgroundTasks):
-    """Daily cron: run all AI traders against today's market brief.
+async def trigger_ai_trading(
+    background_tasks: BackgroundTasks,
+    session: str = Query("close", description="Trading session: morning, midday, or close"),
+):
+    """Cron: run all AI traders against today's market brief.
+    Session determines trade focus (morning=position, midday=adjust, close=risk mgmt).
     Returns immediately; trading runs in the background."""
-    background_tasks.add_task(asyncio.to_thread, _run_trading_sync)
-    return {"message": "AI trading triggered — running in background"}
+    if session not in ("morning", "midday", "close"):
+        session = "close"
+    background_tasks.add_task(asyncio.to_thread, _run_trading_sync, session)
+    return {"message": f"AI trading triggered ({session} session) — running in background"}
 
 
 @router.post("/commentary/trigger")
@@ -122,7 +128,7 @@ async def get_ai_trader_profile(trader_id: str):
     # Get recent trades (last 50)
     trades_resp = (
         db.table("transactions")
-        .select("symbol, asset_type, side, quantity, price, total, created_at")
+        .select("symbol, asset_type, side, quantity, price, total, created_at, reasoning")
         .eq("user_id", trader_id)
         .order("created_at", desc=True)
         .limit(50)
@@ -167,11 +173,11 @@ async def get_ai_trader_profile(trader_id: str):
     }
 
 
-def _run_trading_sync():
+def _run_trading_sync(session: str = "close"):
     """Wrapper to run the async trading function from a sync context."""
     loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(run_ai_trading())
+        loop.run_until_complete(run_ai_trading(session=session))
     finally:
         loop.close()
 

@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: "/watchlist", label: "Watchlist" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/insights", label: "AI Insights" },
+  { href: "/analytics", label: "Analytics" },
   { href: "/how-it-works", label: "How It Works" },
 ];
 

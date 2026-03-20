@@ -59,6 +59,7 @@ interface TraderProfile {
     price: number;
     total: number;
     created_at: string;
+    reasoning: string | null;
   }[];
   commentary: {
     commentary: string;
@@ -244,7 +245,7 @@ export default function TraderProfilePage() {
             {profile.trades.length === 0 ? (
               <p className="p-4 text-gray-400 text-sm">No trades yet</p>
             ) : (
-              <div className="overflow-x-auto max-h-80 overflow-y-auto">
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-gray-900">
                     <tr className="text-left text-gray-400 border-b border-gray-800">
@@ -263,14 +264,19 @@ export default function TraderProfilePage() {
                           })}
                         </td>
                         <td className="px-4 py-2">
-                          <span
-                            className={
-                              t.side === "buy" ? "text-green-400" : "text-red-400"
-                            }
-                          >
-                            {t.side.toUpperCase()}
-                          </span>{" "}
-                          <span className="text-white">{t.quantity} {t.symbol}</span>
+                          <div>
+                            <span
+                              className={
+                                t.side === "buy" ? "text-green-400" : "text-red-400"
+                              }
+                            >
+                              {t.side.toUpperCase()}
+                            </span>{" "}
+                            <span className="text-white">{t.quantity} {t.symbol}</span>
+                          </div>
+                          {t.reasoning && (
+                            <p className="text-xs text-gray-500 mt-0.5 leading-snug">{t.reasoning}</p>
+                          )}
                         </td>
                         <td className="px-4 py-2 text-right text-gray-300">
                           {formatCurrency(t.total)}

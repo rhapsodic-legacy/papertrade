@@ -172,8 +172,39 @@ Follow this checklist for EVERY trade decision:
 - If you have no positions yet, build an initial portfolio of 4-6 assets matching your strategy.
 
 Respond ONLY with valid JSON in this exact format, no other text:
-{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10}]}
+{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation)."}]}
 """
+
+# Session-specific instructions appended to the system prompt
+SESSION_CONTEXTS = {
+    "morning": (
+        "\n\n## Session: Pre-Market (Morning)\n"
+        "Focus on POSITIONING for the day ahead. Review overnight news, pre-market movers, "
+        "and the market regime. This is the best time to:\n"
+        "- Build new positions based on overnight developments\n"
+        "- Set up portfolio for expected sector rotation\n"
+        "- React to earnings releases or macro news from overnight\n"
+        "Maximum 4 trades this session. Save capacity for midday adjustments."
+    ),
+    "midday": (
+        "\n\n## Session: Midday Review\n"
+        "Focus on ADJUSTMENTS based on how the morning played out. This is the time to:\n"
+        "- Take profits on morning positions that moved in your favor\n"
+        "- Cut losses on positions moving against you\n"
+        "- React to any midday news or trend reversals\n"
+        "- Rebalance if sectors shifted significantly\n"
+        "Maximum 3 trades this session. Be selective — only act on clear signals."
+    ),
+    "close": (
+        "\n\n## Session: Market Close\n"
+        "Focus on END-OF-DAY positioning and risk management. This is the time to:\n"
+        "- Lock in profits on day's winners\n"
+        "- Reduce exposure if market regime turned negative during the day\n"
+        "- Position for overnight/next-day catalysts (earnings, Fed, etc.)\n"
+        "- Ensure portfolio risk levels match your strategy\n"
+        "Maximum 4 trades this session."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +708,7 @@ def _format_stocks_by_sector() -> str:
     return "\n".join(lines)
 
 
-async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "") -> list[dict]:
+async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close") -> list[dict]:
     """Ask an AI model for its trading decisions."""
     settings = get_settings()
     personality = PERSONALITIES[personality_key]
@@ -736,20 +767,25 @@ Positions:
 
 Based on ALL the data above, what trades do you want to make today? Follow your strategy's BUY/SELL criteria."""
 
+    # Build system prompt with optional session context
+    system_prompt = TRADE_SYSTEM
+    if session in SESSION_CONTEXTS:
+        system_prompt += SESSION_CONTEXTS[session]
+
     # Call the right API
     api = model_cfg["api"]
     if api == "gemini":
         if not settings.gemini_api_key:
             raise Exception("GEMINI_API_KEY not configured")
-        raw = await _call_gemini(model_cfg["model_id"], TRADE_SYSTEM, user_msg, settings.gemini_api_key)
+        raw = await _call_gemini(model_cfg["model_id"], system_prompt, user_msg, settings.gemini_api_key)
     elif api == "mistral":
         if not settings.mistral_api_key:
             raise Exception("MISTRAL_API_KEY not configured")
-        raw = await _call_mistral(model_cfg["model_id"], TRADE_SYSTEM, user_msg, settings.mistral_api_key)
+        raw = await _call_mistral(model_cfg["model_id"], system_prompt, user_msg, settings.mistral_api_key)
     elif api == "cerebras":
         if not settings.cerebras_api_key:
             raise Exception("CEREBRAS_API_KEY not configured")
-        raw = await _call_cerebras(model_cfg["model_id"], TRADE_SYSTEM, user_msg, settings.cerebras_api_key)
+        raw = await _call_cerebras(model_cfg["model_id"], system_prompt, user_msg, settings.cerebras_api_key)
     else:
         raise Exception(f"Unknown API: {api}")
 
@@ -781,6 +817,7 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
     asset_type = trade.get("asset_type", "")
     side = trade.get("side", "")
     quantity = trade.get("quantity", 0)
+    reasoning = trade.get("reasoning", "")
 
     # Validate basics
     if asset_type not in ("stock", "crypto"):
@@ -850,8 +887,8 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
             else:
                 db.table("positions").update({"quantity": new_qty}).eq("id", existing["id"]).execute()
 
-        # Record transaction
-        tx = db.table("transactions").insert({
+        # Record transaction (reasoning column is nullable — works even before migration)
+        tx_data = {
             "user_id": user_id,
             "symbol": symbol,
             "asset_type": asset_type,
@@ -859,7 +896,10 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
             "quantity": quantity,
             "price": price,
             "total": total,
-        }).execute()
+        }
+        if reasoning:
+            tx_data["reasoning"] = reasoning[:500]  # Cap at 500 chars
+        tx = db.table("transactions").insert(tx_data).execute()
 
         return tx.data[0] if tx.data else None
 
@@ -884,7 +924,7 @@ PROVIDER_DELAYS = {
 
 
 async def _run_trader(
-    db, brief: dict, profile: dict
+    db, brief: dict, profile: dict, session: str = "close"
 ) -> dict:
     """Run a single AI trader: get portfolio, ask LLM, execute trades."""
     user_id = profile["id"]
@@ -914,18 +954,21 @@ async def _run_trader(
         trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
 
         # Ask AI for trades
-        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory)
+        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session)
 
         # Execute trades
         executed = []
         for trade in trades:
             result = await _execute_ai_trade(user_id, trade)
             if result:
-                executed.append({
+                entry = {
                     "symbol": trade["symbol"],
                     "side": trade["side"],
                     "quantity": trade["quantity"],
-                })
+                }
+                if trade.get("reasoning"):
+                    entry["reasoning"] = trade["reasoning"]
+                executed.append(entry)
 
         return {
             "trader": display_name,
@@ -944,13 +987,13 @@ async def _run_trader(
 
 
 async def _run_provider_batch(
-    db, brief: dict, profiles: list[dict], delay: int
+    db, brief: dict, profiles: list[dict], delay: int, session: str = "close"
 ) -> list[dict]:
     """Run a batch of traders that share the same API provider, sequentially
     with the appropriate delay between calls."""
     results = []
     for i, profile in enumerate(profiles):
-        result = await _run_trader(db, brief, profile)
+        result = await _run_trader(db, brief, profile, session=session)
         results.append(result)
         # Delay between calls (skip after last one)
         if i < len(profiles) - 1:
@@ -958,7 +1001,7 @@ async def _run_provider_batch(
     return results
 
 
-async def run_ai_trading() -> dict:
+async def run_ai_trading(session: str = "close") -> dict:
     """Run all AI traders for today, grouped by API provider for optimal speed.
 
     Old approach: 20 traders × 35s = ~12 min (one-size-fits-all delay).
@@ -1004,7 +1047,7 @@ async def run_ai_trading() -> dict:
     for model_key, profiles in by_model.items():
         delay = PROVIDER_DELAYS.get(model_key, 5)
         non_gemini_batches.append(
-            _run_provider_batch(db, brief, profiles, delay)
+            _run_provider_batch(db, brief, profiles, delay, session=session)
         )
 
     # Run Gemini (sequential) in parallel with all non-Gemini providers
@@ -1012,11 +1055,11 @@ async def run_ai_trading() -> dict:
         results = []
         if gemini_pro:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"])
+                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session)
             )
         if gemini_flash:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"])
+                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session)
             )
         return results
 
@@ -1033,6 +1076,7 @@ async def run_ai_trading() -> dict:
 
     return {
         "date": brief.get("date", date.today().isoformat()),
+        "session": session,
         "traders_processed": len(all_results),
         "results": all_results,
     }
