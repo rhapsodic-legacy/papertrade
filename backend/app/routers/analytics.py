@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from app.services.analytics import get_trader_analytics, get_ai_comparison
+from app.services.analytics import get_trader_analytics, get_ai_comparison, _model_label
 from app.services.backtest import get_benchmark_comparison, get_enhancement_comparison
 from app.services.supabase_client import get_supabase_admin
 
@@ -21,8 +21,10 @@ async def trader_analytics(trader_id: str):
         raise HTTPException(status_code=404, detail="Trader not found")
 
     analytics = await get_trader_analytics(trader_id)
+    trader_data = profile.data[0]
+    trader_data["ai_model"] = _model_label(trader_data.get("ai_model", ""))
     return {
-        "trader": profile.data[0],
+        "trader": trader_data,
         "analytics": analytics,
     }
 

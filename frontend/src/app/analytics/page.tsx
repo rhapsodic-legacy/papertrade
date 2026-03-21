@@ -40,10 +40,10 @@ const PERSONALITY_LABELS: Record<string, string> = {
 };
 
 const MODEL_COLORS: Record<string, string> = {
-  "gemini-flash": "#34d399",
-  "gemini-pro": "#10b981",
-  mistral: "#f59e0b",
-  gpt: "#8b5cf6",
+  "Gemini Flash": "#34d399",
+  "Gemini Pro": "#10b981",
+  Mistral: "#f59e0b",
+  GPT: "#8b5cf6",
 };
 
 const SECTOR_COLORS: Record<string, string> = {
@@ -184,7 +184,15 @@ export default function AnalyticsPage() {
     <div className="min-h-screen bg-gray-950">
       <Navbar />
       <main className="max-w-6xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-white mb-6">AI Performance Analytics</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-white">AI Performance Analytics</h1>
+          <Link
+            href="/how-it-works"
+            className="text-sm text-blue-400 hover:text-blue-300 transition"
+          >
+            Trading Glossary →
+          </Link>
+        </div>
 
         {/* Tab Switcher */}
         <div className="flex mb-6">
@@ -262,16 +270,17 @@ function OverviewTab({ data, onSelectTrader }: { data: ComparisonData; onSelectT
             />
             <Tooltip
               contentStyle={{ backgroundColor: "#1f2937", border: "1px solid #374151", borderRadius: "8px", color: "#fff" }}
-              formatter={(value: unknown, _name: unknown, props: { payload?: { model?: string } }) => {
+              formatter={(value: unknown, _name: unknown, props: { payload?: { personality?: string; model?: string } }) => {
+                const personality = PERSONALITY_LABELS[props?.payload?.personality || ""] || "";
                 const model = props?.payload?.model || "";
-                return [`${Number(value).toFixed(2)}%`, `Return (${model})`];
+                return [`${Number(value).toFixed(2)}%`, `${personality} · ${model}`];
               }}
             />
             <Bar dataKey="return" radius={[4, 4, 0, 0]}>
               {returnChartData.map((entry, i) => (
                 <Cell
                   key={i}
-                  fill={PERSONALITY_COLORS[entry.personality] || "#6b7280"}
+                  fill={MODEL_COLORS[entry.model] || "#6b7280"}
                   cursor="pointer"
                   onClick={() => onSelectTrader(data.traders[i].id)}
                 />
@@ -280,10 +289,10 @@ function OverviewTab({ data, onSelectTrader }: { data: ComparisonData; onSelectT
           </BarChart>
         </ResponsiveContainer>
         <div className="flex flex-wrap gap-4 mt-4 justify-center">
-          {Object.entries(PERSONALITY_LABELS).map(([key, label]) => (
-            <div key={key} className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: PERSONALITY_COLORS[key] }} />
-              <span className="text-xs text-gray-400">{label}</span>
+          {Object.entries(MODEL_COLORS).map(([model, color]) => (
+            <div key={model} className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: color }} />
+              <span className="text-xs text-gray-400">{model}</span>
             </div>
           ))}
         </div>

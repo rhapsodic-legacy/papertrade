@@ -51,15 +51,7 @@ function TradeCard({ trade }: { trade: Trade }) {
   const sideColor = trade.side === "buy" ? "text-green-400" : "text-red-400";
   const sideBg = trade.side === "buy" ? "bg-green-900/30" : "bg-red-900/30";
 
-  const modelShort = trade.model
-    ? trade.model.includes("gemini")
-      ? "Gemini"
-      : trade.model.includes("mistral")
-        ? "Mistral"
-        : trade.model.includes("cerebras") || trade.model.includes("llama") || trade.model.includes("gpt-oss")
-          ? "GPT"
-          : trade.model
-    : "Unknown";
+  const modelShort = trade.model || "Unknown";
 
   const timeAgo = getTimeAgo(trade.created_at);
 

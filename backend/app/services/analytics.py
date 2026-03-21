@@ -15,6 +15,18 @@ from app.services.market_data import STOCK_SECTORS, get_quote
 STARTING_BALANCE = 100_000.0
 TRADING_DAYS_PER_YEAR = 252
 
+# Map internal model keys to display labels
+MODEL_DISPLAY_LABELS = {
+    "gemini-flash": "Gemini Flash",
+    "gemini-pro": "Gemini Pro",
+    "mistral": "Mistral",
+    "llama": "GPT",
+}
+
+
+def _model_label(key: str) -> str:
+    return MODEL_DISPLAY_LABELS.get(key, key)
+
 
 async def get_trader_analytics(trader_id: str) -> dict:
     """Compute full analytics for a single trader."""
@@ -334,7 +346,7 @@ async def get_ai_comparison() -> dict:
         traders.append({
             "id": uid,
             "display_name": profile["display_name"],
-            "model": profile["ai_model"],
+            "model": _model_label(profile["ai_model"]),
             "personality": personality,
             "win_rate": trade_metrics["win_rate"],
             "total_trades": trade_metrics["total_trades"],

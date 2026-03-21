@@ -1,8 +1,11 @@
 import httpx
+import logging
 import time
 from datetime import datetime, timezone
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Top stocks from major exchanges
 TOP_STOCKS = {
@@ -283,9 +286,11 @@ async def get_stock_candles(symbol: str, days: int = 30) -> list[dict]:
                 },
             )
             if resp.status_code != 200:
+                logger.warning("Finnhub candles %s: HTTP %s", symbol, resp.status_code)
                 return []
             data = resp.json()
             if data.get("s") != "ok":
+                logger.warning("Finnhub candles %s: status=%s (days=%d)", symbol, data.get("s"), days)
                 return []
             candles = []
             for i in range(len(data.get("t", []))):
@@ -299,6 +304,7 @@ async def get_stock_candles(symbol: str, days: int = 30) -> list[dict]:
             _set_chart_cached(cache_key, candles)
             return candles
     except httpx.TimeoutException:
+        logger.warning("Finnhub candles %s: timeout", symbol)
         return []
 
 

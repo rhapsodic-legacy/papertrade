@@ -2,7 +2,7 @@
 
 **Learn to invest with zero risk using $100,000 in virtual cash.**
 
-Trade real stocks and crypto at live market prices, compete on leaderboards, and watch 20 AI traders powered by Google Gemini, Mistral, and Llama make daily moves with unique strategies.
+Trade real stocks and crypto at live market prices, compete on leaderboards, and watch 20 AI traders powered by Google Gemini, Mistral, and GPT make daily moves with unique strategies.
 
 **Deployed live on Vercel**
 
@@ -27,7 +27,7 @@ Trade real stocks and crypto at live market prices, compete on leaderboards, and
 | **Contrarian Carl** | Buys fear, sells greed, looks for oversold/overbought signals |
 | **Crypto Chad** | Crypto focused, follows narrative cycles and digital asset momentum |
 
-Each personality runs on 4 different LLMs: **Gemini Flash**, **Gemini Pro**, **Mistral Large**, and **Llama 3.3 70B** (via Cerebras).
+Each personality runs on 4 different LLMs: **Gemini Flash**, **Gemini Pro**, **Mistral Large**, and **GPT OSS 120B** (via Cerebras).
 
 ## Tech Stack
 

@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from app.services.supabase_client import get_supabase_admin
 from app.services.market_data import get_stock_candles, STOCK_SECTORS
 from app.services.ai_trader import PERSONALITIES
+from app.services.analytics import _model_label
 
 STARTING_BALANCE = 100_000.0
 
@@ -21,10 +22,12 @@ async def get_benchmark_comparison(days: int = 90) -> dict:
     today = date.today()
     start_date = today - timedelta(days=days)
 
-    # Get SPY price history for benchmark
+    # Get SPY price history for benchmark (try requested period, fall back to 30 days)
     spy_candles = await get_stock_candles("SPY", days=days)
+    if not spy_candles and days > 30:
+        spy_candles = await get_stock_candles("SPY", days=30)
     if not spy_candles:
-        return {"error": "Could not fetch SPY data for benchmark"}
+        return {"error": "Could not fetch SPY data from Finnhub. This may be a temporary API issue — try again in a few minutes."}
 
     # Calculate SPY buy-and-hold return
     spy_start = spy_candles[0]["close"]
@@ -100,7 +103,7 @@ async def get_benchmark_comparison(days: int = 90) -> dict:
         traders.append({
             "id": uid,
             "display_name": profile["display_name"],
-            "model": profile["ai_model"],
+            "model": _model_label(profile["ai_model"]),
             "personality": personality,
             "total_return_pct": round(trader_return, 2),
             "beats_spy": trader_return > spy_return_pct,
@@ -195,7 +198,7 @@ async def get_enhancement_comparison() -> dict:
 
         traders.append({
             "display_name": profile["display_name"],
-            "model": profile["ai_model"],
+            "model": _model_label(profile["ai_model"]),
             "personality": personality,
             "pre_enhancement": pre_metrics,
             "post_enhancement": post_metrics,

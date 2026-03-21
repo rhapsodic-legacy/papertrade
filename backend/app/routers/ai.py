@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
 from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
+from app.services.analytics import _model_label
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
@@ -130,7 +131,7 @@ async def ai_trade_feed(
         trades.append({
             "trader_name": info.get("display_name", "Unknown"),
             "personality": info.get("personality"),
-            "model": info.get("ai_model"),
+            "model": _model_label(info.get("ai_model", "")),
             "symbol": t["symbol"],
             "asset_type": t["asset_type"],
             "side": t["side"],
@@ -164,7 +165,7 @@ async def list_ai_traders():
         traders.append({
             "id": p["id"],
             "display_name": p["display_name"],
-            "ai_model": p["ai_model"],
+            "ai_model": _model_label(p["ai_model"]),
             "personality": personality_key,
         })
     return {"traders": traders}
@@ -243,7 +244,7 @@ async def get_ai_trader_profile(trader_id: str):
 
     return {
         "display_name": profile["display_name"],
-        "ai_model": profile["ai_model"],
+        "ai_model": _model_label(profile["ai_model"]),
         "personality": personality_key,
         "personality_description": PERSONALITIES[personality_key]["prompt"] if personality_key else None,
         "cash_balance": portfolio["cash"],

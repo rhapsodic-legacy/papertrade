@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from app.services.supabase_client import get_supabase_admin
+from app.services.analytics import _model_label
 
 # Weights for each time period (must sum to 1.0)
 WEIGHTS = {
@@ -117,7 +118,7 @@ async def get_scored_leaderboard(
             "return_30d": period_returns[30],
             "return_90d": period_returns[90],
             "is_ai": profile["is_ai"],
-            "ai_model": profile["ai_model"],
+            "ai_model": _model_label(profile["ai_model"]) if profile["ai_model"] else None,
             "user_id": uid,
         })
 
