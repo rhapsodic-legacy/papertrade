@@ -242,11 +242,11 @@ function DataContent() {
       id: "technicals",
       title: "Technical Indicators",
       source: "Computed from 60 days of historical candle data",
-      what: "RSI (14-day) measures overbought/oversold. SMA 20 & SMA 50 show trend direction. Momentum shows 7-day and 30-day returns.",
+      what: "RSI, SMA 20/50, EMA 12/26, MACD (trend crossovers), Bollinger Bands (volatility squeeze/breakout), ATR (for stop loss sizing), momentum, relative volume, and a composite signal score that combines all indicators into a single BUY/SELL/NEUTRAL rating per asset.",
       whyTraders:
-        "Technicals help with timing. An RSI of 80 might mean 'wait for a pullback.' An RSI of 25 on a solid company might mean 'this is a discount.' Moving averages smooth out noise.",
+        "Technicals help with timing. RSI measures overbought/oversold conditions. MACD shows when momentum is shifting. Bollinger Bands reveal when a stock is about to make a big move (squeeze). The composite signal score gives you one quick read on each asset.",
       whyAI:
-        "These indicators compress 60 days of price history into actionable numbers. RSI and SMA give the model clear signals it can act on directly.",
+        "These indicators compress 60 days of price history into actionable numbers. The composite signal score is especially important: it combines RSI, trend, MACD, momentum, Bollinger, and volume into a single score, giving the model a pre-computed directional signal.",
       color: "border-l-purple-500",
     },
     {
@@ -514,9 +514,14 @@ function GlossaryContent() {
       terms: [
         { term: "RSI (Relative Strength Index)", def: "A number from 0 to 100 that measures recent momentum. Above 70 = 'overbought' (price may have risen too fast). Below 30 = 'oversold' (price may have fallen too far). Traders use it to time entries and exits." },
         { term: "SMA (Simple Moving Average)", def: "The average price over a set number of days. SMA 20 = average of last 20 days. When the current price is above the SMA, the trend is generally up. When below, generally down." },
+        { term: "EMA (Exponential Moving Average)", def: "Like SMA but gives more weight to recent prices, so it reacts faster to new trends. EMA 12 and EMA 26 are the building blocks of MACD." },
+        { term: "MACD", def: "Moving Average Convergence Divergence. The difference between EMA 12 and EMA 26. When the MACD histogram is positive, momentum is bullish. When it crosses from negative to positive, that is a buy signal. Opposite for sell signals." },
+        { term: "Bollinger Bands", def: "A price channel that expands and contracts with volatility. When bands are narrow (a 'squeeze'), a big move is coming. Price near the upper band suggests overbought; near the lower band suggests oversold." },
+        { term: "ATR (Average True Range)", def: "Measures how much an asset's price typically moves in a day. Used for setting stop losses. If ATR is $5, a stop loss $10 below entry gives 2x ATR of room." },
+        { term: "Signal Score", def: "A composite score from -100 to +100 that combines RSI, trend (SMA position), MACD, momentum, Bollinger Bands, and volume into a single BUY/SELL/NEUTRAL rating. Saves time by summarizing all technicals into one number." },
         { term: "P/E Ratio", def: "Price-to-Earnings ratio. Stock price divided by earnings per share. A P/E of 15 means you're paying $15 for every $1 the company earns. Lower P/E can mean undervalued; higher can mean the market expects growth." },
-        { term: "Market Cap", def: "The total value of all a company's shares. Calculated as share price × total shares. Large cap (>$10B) = established companies. Small cap (<$2B) = smaller, often more volatile companies." },
-        { term: "ATH (All-Time High)", def: "The highest price an asset has ever reached. Common in crypto — 'Bitcoin is 40% below ATH' means it has fallen 40% from its record price." },
+        { term: "Market Cap", def: "The total value of all a company's shares. Calculated as share price times total shares. Large cap (>$10B) = established companies. Small cap (<$2B) = smaller, often more volatile companies." },
+        { term: "ATH (All-Time High)", def: "The highest price an asset has ever reached. Common in crypto. 'Bitcoin is 40% below ATH' means it has fallen 40% from its record price." },
       ],
     },
   ];
@@ -618,7 +623,7 @@ function BuildersContent() {
     {
       num: "02",
       title: "Feature engineering beats raw data.",
-      desc: "Feeding the AI raw candle arrays is much less effective than pre-computing indicators like RSI and SMA. LLMs reason better about 'RSI is 28 (oversold)' than about 60 daily close prices.",
+      desc: "Feeding the AI raw candle arrays is much less effective than pre-computing indicators like RSI, MACD, Bollinger Bands, and a composite signal score. LLMs reason better about 'Signal: STRONG BUY (+72), RSI oversold, MACD bullish crossover' than about 60 daily close prices.",
     },
     {
       num: "03",

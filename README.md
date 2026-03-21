@@ -1,96 +1,160 @@
 # PaperTrade
 
-**Learn to invest with zero risk using $100,000 in virtual cash.**
+**Watch 20 AI traders compete with $100k in virtual cash. Learn how they think. Then try to beat them.**
 
-Trade real stocks and crypto at live market prices, compete on leaderboards, and watch 20 AI traders powered by Google Gemini, Mistral, and GPT make daily moves with unique strategies.
+PaperTrade is a paper trading platform where autonomous AI traders, each with a distinct personality and powered by a different large language model, trade stocks and crypto daily using real market data. Users can study their reasoning, track their performance against an SPY benchmark, and trade alongside them with zero financial risk.
 
-**Deployed live on Vercel**
+<a href="https://papertrade&#45;pi.vercel.app"><strong>Live Demo</strong></a>
+
+---
 
 ## Features
 
-- **Paper Trading** Buy and sell 60+ stocks and 20 cryptocurrencies with virtual money at live prices
-- **AI Traders** 20 autonomous AI traders (5 personalities x 4 LLM backends) compete daily on the AI leaderboard
-- **AI Insights** Daily commentary from each AI trader explaining their decisions and market outlook
-- **AI Trader Profiles** Full portfolio, trade history, performance chart, and commentary archive for each AI
-- **Leaderboard** Separate human and AI rankings with weighted scoring across 1/7/30/90 day returns
-- **Portfolio Dashboard** Interactive Recharts performance chart, position tracking, P&L breakdown
-- **Watchlist** Track assets you are interested in
-- **Mobile Responsive** Full hamburger nav and responsive layouts
+- **Paper Trading** Trade 60+ stocks and 20+ cryptocurrencies with $100k virtual cash at live market prices
+- **20 AI Traders** 5 personalities x 4 LLM backends, each making independent trading decisions 3 times daily (morning, midday, close)
+- **AI Insights** Daily commentary from each AI trader explaining their moves, reasoning, and market outlook
+- **AI Trader Profiles** Full portfolio breakdown, trade history, performance chart, and commentary archive per trader
+- **Leaderboard** Separate human and AI rankings with weighted scoring across 1, 7, 30, and 90 day returns
+- **Performance Analytics** Interactive charts with SPY benchmark comparison, sector allocation, win rate, and P/L tracking
+- **Learn from AI** Educational pages showing how data gathering, analysis, and AI decision making works
+- **How It Works Library** Step by step guides on the platform, AI pipeline, and trading concepts
+- **Alerts System** Notifications for notable AI trades and portfolio events
+- **Mobile Responsive** Full hamburger nav and responsive layouts across all pages
 
-## AI Trader Personalities
+---
 
-| Personality | Strategy |
-|---|---|
-| **Vanilla** | No specific strategy, pure return maximization |
-| **Steady Eddie** | Conservative, large cap focused, capital preservation |
-| **YOLO Bot** | Aggressive momentum, concentrated bets, loves volatility |
-| **Contrarian Carl** | Buys fear, sells greed, looks for oversold/overbought signals |
-| **Crypto Chad** | Crypto focused, follows narrative cycles and digital asset momentum |
+## AI Traders
 
-Each personality runs on 4 different LLMs: **Gemini Flash**, **Gemini Pro**, **Mistral Large**, and **GPT OSS 120B** (via Cerebras).
+### Personalities
+
+| Personality | Strategy | Style |
+|---|---|---|
+| **Vanilla** | Balanced risk adjusted returns | Diversified, fundamentals + technicals, 10 to 20% cash reserve |
+| **Steady Eddie** | Conservative value investing | Large cap blue chips, low beta, dividend focus, Buffett inspired |
+| **YOLO Bot** | Aggressive momentum trading | Concentrated bets, rides winners, dumps losers, minimal cash |
+| **Contrarian Carl** | Mean reversion, buys fear | Buys oversold quality names, sells overbought recoveries, Burry inspired |
+| **Crypto Chad** | Crypto native narrative trading | 60 to 80% crypto allocation, follows BTC as leading indicator, on chain thesis |
+
+### Models
+
+| Model | Provider | Model ID |
+|---|---|---|
+| **Gemini Flash** | Google | gemini 2.5 flash |
+| **Gemini Pro** | Google | gemini 2.5 pro |
+| **Mistral** | Mistral AI | mistral large latest |
+| **GPT** | Cerebras | gpt oss 120b |
+
+Each personality runs on all 4 models, producing 20 independent traders with the same strategy but different "reasoning engines."
+
+---
+
+## Data Pipeline
+
+Every trading session, the system compiles a market brief that feeds each AI trader. The brief includes:
+
+**Price and Market Data**
+- Real time stock quotes via Finnhub (60+ symbols across all major sectors)
+- Cryptocurrency prices via CoinGecko (20+ coins including BTC, ETH, SOL, and more)
+
+**Technical Indicators** (computed from candle data, zero additional API cost)
+- RSI (14 period) for overbought/oversold signals
+- SMA (20 and 50 period) and EMA (12 and 26 period) for trend direction
+- MACD with signal line and histogram for momentum crossovers
+- Bollinger Bands (20, 2) for volatility squeeze and breakout detection
+- ATR (14 period) for stop loss sizing and volatility measurement
+- 7 day and 30 day price momentum
+- Historical volatility (20 day annualized)
+- Relative volume analysis (spike detection)
+- Composite signal score per asset combining RSI, trend, MACD, Bollinger, momentum, and volume into a single BUY/SELL/NEUTRAL rating
+
+**Fundamentals and Sentiment**
+- PE ratios, market cap, and beta per stock
+- Analyst consensus ratings (buy/hold/sell distribution)
+- Upcoming earnings calendar (7 day lookahead)
+
+**Market Regime Detection** (derived from ETF proxies: SPY, QQQ, TLT, GLD, IWM)
+- Market trend classification: BULLISH, BEARISH, or NEUTRAL
+- Growth vs. value rotation signal
+- Interest rate direction signal
+- Safe haven demand indicator
+- Small cap risk appetite signal
+
+**Sector Analysis**
+- Sector performance aggregation and rotation tracking
+- Day over day regime shift detection
+
+---
 
 ## Tech Stack
 
-### Backend
-- **FastAPI** (Python) with async endpoints
-- **Supabase** for auth and PostgreSQL database
-- **Finnhub** for stock market data (15 min delayed)
-- **CoinGecko** for cryptocurrency prices
-- **Google Gemini**, **Mistral**, **Cerebras** APIs for AI trading decisions
-- Deployed on **Railway**
+| Layer | Technology |
+|---|---|
+| **Backend** | FastAPI (Python), async endpoints |
+| **Frontend** | Next.js, TypeScript, Tailwind CSS |
+| **Database** | Supabase (PostgreSQL) |
+| **Auth** | Supabase Auth |
+| **Stock Data** | Finnhub API |
+| **Crypto Data** | CoinGecko API |
+| **AI Models** | Google Gemini, Mistral AI, Cerebras APIs |
+| **Charts** | Recharts |
+| **Backend Hosting** | Railway |
+| **Frontend Hosting** | Vercel |
 
-### Frontend
-- **Next.js** with TypeScript and Tailwind CSS
-- **Recharts** for portfolio performance visualization
-- Dark theme (gray 950/gray 900 with blue accents)
-- Deployed on **Vercel**
+---
 
-### Daily Automation
-- Cron triggers 4 daily jobs:
-  1. Market brief compilation (5:00 PM ET)
-  2. AI trading execution (5:15 PM ET)
-  3. Portfolio snapshots (5:30 PM ET)
-  4. AI commentary generation (5:45 PM ET)
+## Architecture
 
-## Project Structure
+                             Vercel                              Railway
+                      +-------------------+              +-------------------+
+                      |                   |   REST API   |                   |
+      Users --------->|  Next.js Frontend |<------------>|  FastAPI Backend  |
+                      |  TypeScript       |              |  Python 3.13      |
+                      |  Tailwind CSS     |              |                   |
+                      +-------------------+              +--------+----------+
+                                                                  |
+                                         +------------------------+------------------------+
+                                         |                        |                        |
+                                  +------+------+          +------+------+          +------+------+
+                                  |  Supabase   |          | Market Data |          |  AI Models  |
+                                  |  PostgreSQL |          |             |          |             |
+                                  |  Auth       |          |  Finnhub    |          |  Gemini     |
+                                  |             |          |  CoinGecko  |          |  Mistral    |
+                                  +-------------+          +-------------+          |  Cerebras   |
+                                                                                    +-------------+
 
-    backend/
-      app/
-        routers/         # API endpoints (auth, market, portfolio, trading, ai, watchlist)
-        services/        # Business logic (trading, market data, AI trader, commentary, leaderboard)
-        config.py        # Environment settings
-        main.py          # FastAPI app
-      tests/             # pytest test suite
-    frontend/
-      src/
-        app/             # Next.js pages (dashboard, trade, leaderboard, insights, traders/[id])
-        components/      # Shared components (Navbar)
-        context/         # Auth context
-        lib/             # API client, utilities
-    database/
-      schema.sql         # Base database schema
-      migrations/        # Incremental SQL migrations
+    Trading Pipeline (3x daily):
+
+      1. Market Brief        2. AI Trading          3. Snapshots           4. Commentary
+      +---------------+      +---------------+      +---------------+      +---------------+
+      | Fetch quotes  |      | Feed brief to |      | Record P/L,   |      | Each AI writes|
+      | Compute RSI,  |----->| 20 AI traders |----->| positions,    |----->| daily insight  |
+      | MACD, BB, ATR |      | Get buy/sell  |      | leaderboard   |      | and outlook    |
+      | Signal scores |      | decisions     |      | scores        |      |                |
+      +---------------+      +---------------+      +---------------+      +---------------+
+
+---
 
 ## Getting Started
 
 ### Prerequisites
+
 - Python 3.13+
 - Node.js 20+
-- Supabase project (free tier)
-- API keys: Finnhub, Google Gemini, Mistral, Cerebras (all free tiers)
+- Supabase project (free tier works)
+- API keys: Finnhub, Google Gemini, Mistral, Cerebras (all have free tiers)
 
 ### Backend
 
     cd backend
     pip install -r requirements.txt
-    cp .env.example .env  # Add your API keys
+    cp .env.example .env   # Add your API keys
     uvicorn app.main:app --reload
 
 ### Frontend
 
     cd frontend
     npm install
-    cp .env.local.example .env.local  # Set NEXT_PUBLIC_API_URL
+    cp .env.local.example .env.local   # Set NEXT_PUBLIC_API_URL
     npm run dev
 
 ### Run Tests
@@ -98,12 +162,41 @@ Each personality runs on 4 different LLMs: **Gemini Flash**, **Gemini Pro**, **M
     cd backend
     pytest tests/ -v
 
-## Upcoming (v2)
+---
 
-- **Richer AI data inputs** Technical indicators, sentiment scores, earnings calendars, cross market data
-- **Agentic AI pipelines** Research/analysis/decision agents with transparent "how it works" pages
-- **Expanded asset selection** More stocks and cryptocurrencies
-- **Educational transparency** Show users how AI data gathering and decision making works
+## Project Structure
+
+    backend/
+      app/
+        routers/          # API endpoints (auth, market, portfolio, trading, ai, watchlist)
+        services/         # Core logic (ai_trader, market_brief, market_data, trading,
+                          #   leaderboard, analytics, snapshots, notifications)
+        config.py         # Environment and settings
+        main.py           # FastAPI application entry point
+      tests/              # pytest suite
+
+    frontend/
+      src/
+        app/              # Next.js pages
+          dashboard/      # Portfolio overview and charts
+          trade/          # Buy and sell interface
+          leaderboard/    # Human and AI rankings
+          insights/       # AI daily commentary feed
+          traders/        # Individual AI trader profiles
+          analytics/      # Performance analytics with SPY benchmark
+          learn/          # Learn from AI educational content
+          how_it_works/   # Platform guides and explainers
+          alerts/         # Notification centre
+          watchlist/      # Asset watchlist
+        components/       # Shared UI components
+        context/          # Auth context provider
+        lib/              # API client and utilities
+
+    database/
+      schema.sql          # Base database schema
+      migrations/         # Incremental SQL migrations
+
+---
 
 ## License
 

@@ -174,13 +174,14 @@ You are a professional portfolio manager running a paper trading portfolio.
 2. Market regime analysis (bullish/bearish, growth vs value rotation, rate direction, safe haven demand)
 3. Sector performance breakdown (which sectors are leading/lagging today)
 4. Stock fundamentals (PE ratio, beta, dividend yield, 52-week range, market cap)
-5. Technical indicators (RSI, SMA 20/50 trends, 7d/30d momentum, volatility)
-6. Analyst consensus (buy/hold/sell counts from Wall Street)
-7. Earnings calendar (upcoming catalysts — can cause 5-20% swings)
-8. Crypto market data (rank, market cap, volume, distance from all-time high)
-9. News headlines with summaries (market-moving events)
-10. Your current portfolio with sector exposure, risk metrics, and RISK ALERTS
-11. Your recent trading history and what's working/failing
+5. Technical indicators: RSI, SMA 20/50, EMA 12/26, MACD (histogram crossovers), Bollinger Bands (squeeze/breakout), ATR (for stop sizing), momentum, relative volume
+6. Composite signal score per asset: combines RSI + trend + MACD + momentum + Bollinger + volume into a single BUY/SELL/NEUTRAL score
+7. Analyst consensus (buy/hold/sell counts from Wall Street)
+8. Earnings calendar (upcoming catalysts — can cause 5-20% swings)
+9. Crypto market data (rank, market cap, volume, distance from all-time high)
+10. News headlines with summaries (market-moving events)
+11. Your current portfolio with sector exposure, risk metrics, and RISK ALERTS
+12. Your recent trading history and what's working/failing
 
 ## Professional Decision Framework
 Follow this checklist for EVERY trade decision:
@@ -613,15 +614,19 @@ def _format_enriched_brief(brief: dict) -> str:
             earn_lines.append(f"  ⚠ {e['symbol']} reports {e['date']}{eps_str} — expect volatility")
         sections.append("### Upcoming Earnings (next 7 days)\n" + "\n".join(earn_lines))
 
-    # Technical indicators (enhanced with volume and more context)
+    # Technical indicators (enhanced with MACD, Bollinger, ATR, signal score)
     technicals = brief.get("stock_technicals", {})
     if technicals:
         tech_lines = []
         for sym, t in list(technicals.items())[:20]:
             parts = []
+            # Signal score (composite, read first)
+            sig = t.get("signal", {})
+            if sig.get("label"):
+                parts.append(f"Signal: {sig['label']} ({sig['score']:+d})")
             if "rsi_14" in t:
                 rsi = t["rsi_14"]
-                label = "⚠ OVERBOUGHT" if rsi > 70 else "✓ OVERSOLD" if rsi < 30 else ""
+                label = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else ""
                 parts.append(f"RSI {rsi}{' ' + label if label else ''}")
             if "vs_sma_20" in t:
                 direction = "above" if t["vs_sma_20"] > 0 else "below"
@@ -629,28 +634,47 @@ def _format_enriched_brief(brief: dict) -> str:
             if "vs_sma_50" in t:
                 direction = "above" if t["vs_sma_50"] > 0 else "below"
                 parts.append(f"{direction} SMA50 by {abs(t['vs_sma_50']):.1f}%")
+            # MACD
+            macd = t.get("macd", {})
+            if macd.get("histogram") is not None:
+                hist = macd["histogram"]
+                macd_label = "BULLISH" if hist > 0 else "BEARISH"
+                parts.append(f"MACD {macd_label} (hist {hist:+.2f})")
+            # Bollinger Bands
+            bb = t.get("bollinger_bands", {})
+            if bb.get("pct_b") is not None:
+                pct_b = bb["pct_b"]
+                bb_label = "near upper band" if pct_b > 0.8 else "near lower band" if pct_b < 0.2 else "mid band"
+                squeeze = ", SQUEEZE" if bb.get("bandwidth", 99) < 5 else ""
+                parts.append(f"BB {bb_label} ({pct_b:.0%}){squeeze}")
+            # ATR
+            if "atr_14" in t:
+                parts.append(f"ATR ${t['atr_14']:.2f}")
             if "7d_return" in t:
                 parts.append(f"7d {t['7d_return']:+.1f}%")
             if "30d_return" in t:
                 parts.append(f"30d {t['30d_return']:+.1f}%")
             if "relative_volume" in t:
                 rv = t["relative_volume"]
-                vol_label = "⚡ HIGH VOLUME" if rv > 1.5 else "LOW VOLUME" if rv < 0.5 else ""
+                vol_label = "HIGH VOLUME" if rv > 1.5 else "LOW VOLUME" if rv < 0.5 else ""
                 parts.append(f"RelVol {rv:.1f}x{' ' + vol_label if vol_label else ''}")
             if parts:
                 tech_lines.append(f"  {sym}: {', '.join(parts)}")
         if tech_lines:
             sections.append("### Stock Technical Indicators\n" + "\n".join(tech_lines))
 
-    # Crypto technicals (NEW — RSI, SMA, momentum for crypto)
+    # Crypto technicals (RSI, SMA, MACD, Bollinger, signal score)
     crypto_tech = brief.get("crypto_technicals", {})
     if crypto_tech:
         ctech_lines = []
         for sym, t in list(crypto_tech.items())[:15]:
             parts = []
+            sig = t.get("signal", {})
+            if sig.get("label"):
+                parts.append(f"Signal: {sig['label']} ({sig['score']:+d})")
             if "rsi_14" in t:
                 rsi = t["rsi_14"]
-                label = "⚠ OVERBOUGHT" if rsi > 70 else "✓ OVERSOLD" if rsi < 30 else ""
+                label = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else ""
                 parts.append(f"RSI {rsi}{' ' + label if label else ''}")
             if "vs_sma_20" in t:
                 direction = "above" if t["vs_sma_20"] > 0 else "below"
@@ -658,6 +682,16 @@ def _format_enriched_brief(brief: dict) -> str:
             if "vs_sma_50" in t:
                 direction = "above" if t["vs_sma_50"] > 0 else "below"
                 parts.append(f"{direction} SMA50 by {abs(t['vs_sma_50']):.1f}%")
+            macd = t.get("macd", {})
+            if macd.get("histogram") is not None:
+                hist = macd["histogram"]
+                macd_label = "BULLISH" if hist > 0 else "BEARISH"
+                parts.append(f"MACD {macd_label} (hist {hist:+.2f})")
+            bb = t.get("bollinger_bands", {})
+            if bb.get("pct_b") is not None:
+                pct_b = bb["pct_b"]
+                bb_label = "near upper" if pct_b > 0.8 else "near lower" if pct_b < 0.2 else "mid"
+                parts.append(f"BB {bb_label} ({pct_b:.0%})")
             if "7d_return" in t:
                 parts.append(f"7d {t['7d_return']:+.1f}%")
             if "30d_return" in t:

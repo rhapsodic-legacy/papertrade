@@ -55,7 +55,187 @@ def _compute_momentum(closes: list[float]) -> dict:
     return result
 
 
-def _derive_technicals(closes: list[float], current_price: float) -> dict:
+def _compute_ema(closes: list[float], period: int) -> float | None:
+    """Exponential Moving Average — reacts faster to recent price changes than SMA."""
+    if len(closes) < period:
+        return None
+    multiplier = 2 / (period + 1)
+    ema = sum(closes[:period]) / period  # seed with SMA
+    for price in closes[period:]:
+        ema = (price - ema) * multiplier + ema
+    return round(ema, 2)
+
+
+def _compute_macd(closes: list[float]) -> dict | None:
+    """MACD (12, 26, 9) — trend following momentum indicator.
+    Positive histogram = bullish momentum, negative = bearish.
+    Signal line crossovers indicate trade entries/exits."""
+    ema_12 = _compute_ema(closes, 12)
+    ema_26 = _compute_ema(closes, 26)
+    if ema_12 is None or ema_26 is None:
+        return None
+    macd_line = round(ema_12 - ema_26, 2)
+    # Approximate signal line from recent MACD values
+    if len(closes) < 35:
+        return {"macd_line": macd_line, "signal_line": None, "histogram": None}
+    macd_series = []
+    for i in range(26, len(closes)):
+        e12 = _compute_ema(closes[:i + 1], 12)
+        e26 = _compute_ema(closes[:i + 1], 26)
+        if e12 and e26:
+            macd_series.append(e12 - e26)
+    signal_line = _compute_ema(macd_series, 9) if len(macd_series) >= 9 else None
+    histogram = round(macd_line - signal_line, 2) if signal_line else None
+    return {
+        "macd_line": macd_line,
+        "signal_line": round(signal_line, 2) if signal_line else None,
+        "histogram": histogram,
+    }
+
+
+def _compute_bollinger_bands(closes: list[float], period: int = 20, std_dev: float = 2.0) -> dict | None:
+    """Bollinger Bands — price channel based on volatility.
+    Price near upper band = overbought, near lower = oversold.
+    Squeeze (narrow bands) often precedes a breakout."""
+    if len(closes) < period:
+        return None
+    window = closes[-period:]
+    sma = sum(window) / period
+    variance = sum((p - sma) ** 2 for p in window) / period
+    std = math.sqrt(variance)
+    upper = round(sma + std_dev * std, 2)
+    lower = round(sma - std_dev * std, 2)
+    current = closes[-1]
+    bandwidth = round((upper - lower) / sma * 100, 2)  # % width
+    # Position within bands: 0 = at lower, 1 = at upper
+    pct_b = round((current - lower) / (upper - lower), 2) if upper != lower else 0.5
+    return {
+        "upper": upper,
+        "lower": lower,
+        "bandwidth": bandwidth,
+        "pct_b": pct_b,
+    }
+
+
+def _compute_atr(candles: list[dict], period: int = 14) -> float | None:
+    """Average True Range — measures volatility in price units.
+    Used for stop loss placement and position sizing."""
+    if len(candles) < period + 1:
+        return None
+    true_ranges = []
+    for i in range(-period, 0):
+        high = candles[i].get("high", candles[i]["close"])
+        low = candles[i].get("low", candles[i]["close"])
+        prev_close = candles[i - 1]["close"]
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        true_ranges.append(tr)
+    return round(sum(true_ranges) / period, 2)
+
+
+def _compute_signal_score(technicals: dict, current_price: float) -> dict:
+    """Composite signal score combining multiple indicators.
+    Returns a score from -100 (strong sell) to +100 (strong buy)
+    and a human readable signal label. Zero extra API cost."""
+    signals = []
+    weights = []
+
+    # RSI signal (-1 to +1)
+    rsi = technicals.get("rsi_14")
+    if rsi is not None:
+        if rsi < 30:
+            signals.append(1.0)   # oversold = bullish
+        elif rsi > 70:
+            signals.append(-1.0)  # overbought = bearish
+        elif rsi < 45:
+            signals.append(0.3)
+        elif rsi > 55:
+            signals.append(-0.3)
+        else:
+            signals.append(0.0)
+        weights.append(0.20)
+
+    # SMA trend signal
+    vs_20 = technicals.get("vs_sma_20")
+    vs_50 = technicals.get("vs_sma_50")
+    if vs_20 is not None and vs_50 is not None:
+        if vs_20 > 0 and vs_50 > 0:
+            signals.append(0.8)   # above both SMAs = uptrend
+        elif vs_20 < 0 and vs_50 < 0:
+            signals.append(-0.8)  # below both = downtrend
+        elif vs_20 > 0 > vs_50:
+            signals.append(0.3)   # recovering
+        else:
+            signals.append(-0.3)  # weakening
+        weights.append(0.20)
+
+    # MACD signal
+    macd = technicals.get("macd")
+    if macd and macd.get("histogram") is not None:
+        hist = macd["histogram"]
+        if hist > 0.5:
+            signals.append(0.8)
+        elif hist > 0:
+            signals.append(0.3)
+        elif hist < -0.5:
+            signals.append(-0.8)
+        else:
+            signals.append(-0.3)
+        weights.append(0.20)
+
+    # Momentum signal
+    ret_7d = technicals.get("7d_return")
+    if ret_7d is not None:
+        clamped = max(-5, min(5, ret_7d)) / 5  # normalize to -1..1
+        signals.append(clamped)
+        weights.append(0.15)
+
+    # Bollinger Bands signal
+    bb = technicals.get("bollinger_bands")
+    if bb and bb.get("pct_b") is not None:
+        pct_b = bb["pct_b"]
+        if pct_b < 0.2:
+            signals.append(0.7)   # near lower band = buy signal
+        elif pct_b > 0.8:
+            signals.append(-0.7)  # near upper band = sell signal
+        else:
+            signals.append(0.0)
+        weights.append(0.15)
+
+    # Volume confirmation
+    rel_vol = technicals.get("relative_volume")
+    if rel_vol is not None and signals:
+        # High volume confirms the prevailing signal direction
+        vol_boost = 0.1 if rel_vol > 1.5 else (-0.1 if rel_vol < 0.5 else 0.0)
+        avg_signal = sum(signals) / len(signals)
+        if avg_signal > 0:
+            signals.append(vol_boost)
+        else:
+            signals.append(-vol_boost)
+        weights.append(0.10)
+
+    if not signals:
+        return {"score": 0, "label": "NO DATA"}
+
+    # Weighted average, scaled to -100..+100
+    total_weight = sum(weights)
+    weighted_sum = sum(s * w for s, w in zip(signals, weights))
+    score = round(weighted_sum / total_weight * 100)
+
+    if score >= 60:
+        label = "STRONG BUY"
+    elif score >= 25:
+        label = "BUY"
+    elif score >= -25:
+        label = "NEUTRAL"
+    elif score >= -60:
+        label = "SELL"
+    else:
+        label = "STRONG SELL"
+
+    return {"score": score, "label": label}
+
+
+def _derive_technicals(closes: list[float], current_price: float, candles: list[dict] | None = None) -> dict:
     """Derive technical indicators from historical close prices."""
     sma_20 = _compute_sma(closes, 20)
     sma_50 = _compute_sma(closes, 50)
@@ -72,6 +252,32 @@ def _derive_technicals(closes: list[float], current_price: float) -> dict:
     if rsi is not None:
         technicals["rsi_14"] = rsi
     technicals.update(momentum)
+
+    # New indicators
+    ema_12 = _compute_ema(closes, 12)
+    ema_26 = _compute_ema(closes, 26)
+    if ema_12:
+        technicals["ema_12"] = ema_12
+    if ema_26:
+        technicals["ema_26"] = ema_26
+
+    macd = _compute_macd(closes)
+    if macd:
+        technicals["macd"] = macd
+
+    bb = _compute_bollinger_bands(closes)
+    if bb:
+        technicals["bollinger_bands"] = bb
+
+    if candles:
+        atr = _compute_atr(candles)
+        if atr:
+            technicals["atr_14"] = atr
+
+    # Composite signal score (combines all indicators above)
+    signal = _compute_signal_score(technicals, current_price)
+    technicals["signal"] = signal
+
     return technicals
 
 
@@ -376,7 +582,7 @@ async def _compute_stock_technicals(symbols: list[str]) -> dict[str, dict]:
             continue
         closes = [c["close"] for c in candles]
         current_price = closes[-1]
-        tech = _derive_technicals(closes, current_price)
+        tech = _derive_technicals(closes, current_price, candles=candles)
         # Add volume analysis if available (Finnhub candles include volume)
         vol_analysis = _compute_volume_analysis(candles)
         if vol_analysis:
