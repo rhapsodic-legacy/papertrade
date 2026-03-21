@@ -264,12 +264,27 @@ async def get_quote(symbol: str, asset_type: str) -> dict | None:
 
 
 async def get_stock_candles(symbol: str, days: int = 30) -> list[dict]:
-    """Fetch historical daily candles from Finnhub."""
+    """Fetch historical daily candles. Tries Finnhub first, falls back to Yahoo Finance."""
     cache_key = f"stock_candle:{symbol.upper()}:{days}"
     cached = _get_chart_cached(cache_key)
     if cached is not None:
         return cached
 
+    # Try Finnhub first
+    candles = await _finnhub_candles(symbol, days)
+
+    # Fall back to Yahoo Finance if Finnhub fails
+    if not candles:
+        logger.info("Falling back to Yahoo Finance for %s candles", symbol)
+        candles = await _yahoo_candles(symbol, days)
+
+    if candles:
+        _set_chart_cached(cache_key, candles)
+    return candles
+
+
+async def _finnhub_candles(symbol: str, days: int) -> list[dict]:
+    """Fetch candles from Finnhub."""
     settings = get_settings()
     now = int(datetime.now(timezone.utc).timestamp())
     start = now - (days * 86400)
@@ -301,10 +316,51 @@ async def get_stock_candles(symbol: str, days: int = 30) -> list[dict]:
                     "low": data["l"][i],
                     "close": data["c"][i],
                 })
-            _set_chart_cached(cache_key, candles)
             return candles
     except httpx.TimeoutException:
         logger.warning("Finnhub candles %s: timeout", symbol)
+        return []
+
+
+async def _yahoo_candles(symbol: str, days: int) -> list[dict]:
+    """Fetch candles from Yahoo Finance chart API (free, no key needed)."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol.upper()}",
+                params={
+                    "range": f"{days}d",
+                    "interval": "1d",
+                },
+                headers={"User-Agent": "PaperTrade/1.0"},
+            )
+            if resp.status_code != 200:
+                logger.warning("Yahoo candles %s: HTTP %s", symbol, resp.status_code)
+                return []
+            data = resp.json()
+            result = data.get("chart", {}).get("result", [])
+            if not result:
+                logger.warning("Yahoo candles %s: no result data", symbol)
+                return []
+            timestamps = result[0].get("timestamp", [])
+            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+            opens = quotes.get("open", [])
+            highs = quotes.get("high", [])
+            lows = quotes.get("low", [])
+            closes = quotes.get("close", [])
+            candles = []
+            for i in range(len(timestamps)):
+                if closes[i] is not None:
+                    candles.append({
+                        "time": timestamps[i],
+                        "open": opens[i],
+                        "high": highs[i],
+                        "low": lows[i],
+                        "close": closes[i],
+                    })
+            return candles
+    except Exception as e:
+        logger.warning("Yahoo candles %s: %s", symbol, e)
         return []
 
 
