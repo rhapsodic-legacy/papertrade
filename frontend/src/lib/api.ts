@@ -641,6 +641,74 @@ class ApiClient {
       };
     }>("/api/portfolio/health");
   }
+
+  // Notifications
+  async getNotifications(limit = 50, unreadOnly = false) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (unreadOnly) params.set("unread_only", "true");
+    return this.request<{
+      notifications: {
+        id: string;
+        type: string;
+        title: string;
+        message: string;
+        metadata: Record<string, unknown>;
+        read: boolean;
+        created_at: string;
+      }[];
+      unread_count: number;
+    }>(`/api/notifications/?${params.toString()}`);
+  }
+
+  async getUnreadCount() {
+    return this.request<{ unread_count: number }>("/api/notifications/unread-count");
+  }
+
+  async markNotificationsRead(notificationIds: string[]) {
+    return this.request<{ marked: number }>("/api/notifications/mark-read", {
+      method: "POST",
+      body: JSON.stringify({ notification_ids: notificationIds }),
+    });
+  }
+
+  async markAllNotificationsRead() {
+    return this.request<{ marked: number }>("/api/notifications/mark-all-read", {
+      method: "POST",
+    });
+  }
+
+  // Alert Rules
+  async getAlertRules() {
+    return this.request<{
+      rules: {
+        id: string;
+        type: string;
+        config: Record<string, unknown>;
+        active: boolean;
+        triggered_at: string | null;
+        created_at: string;
+      }[];
+    }>("/api/notifications/alerts");
+  }
+
+  async createAlertRule(type: string, config: Record<string, unknown>) {
+    return this.request<{
+      id: string;
+      type: string;
+      config: Record<string, unknown>;
+      active: boolean;
+      created_at: string;
+    }>("/api/notifications/alerts", {
+      method: "POST",
+      body: JSON.stringify({ type, config }),
+    });
+  }
+
+  async deleteAlertRule(ruleId: string) {
+    return this.request<{ message: string }>(`/api/notifications/alerts/${ruleId}`, {
+      method: "DELETE",
+    });
+  }
 }
 
 export const api = new ApiClient();

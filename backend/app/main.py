@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import ai, analytics, auth, market, portfolio, trading, watchlist
+from app.routers import ai, analytics, auth, market, notifications, portfolio, trading, watchlist
 
 app = FastAPI(
     title="PaperTrade",
@@ -31,6 +31,7 @@ app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(market.router, prefix="/api/market", tags=["market"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
 app.include_router(trading.router, prefix="/api/trading", tags=["trading"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"])

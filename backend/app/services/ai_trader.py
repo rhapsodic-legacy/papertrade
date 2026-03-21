@@ -1231,6 +1231,13 @@ async def run_ai_trading(session: str = "close") -> dict:
     except Exception:
         snapshot_count = 0
 
+    # Notify users who follow AI traders
+    try:
+        from app.services.notifications import notify_ai_trades
+        notify_ai_trades(all_results)
+    except Exception as e:
+        logger.error("Failed to send AI trade notifications: %s", e)
+
     return {
         "date": brief.get("date", date.today().isoformat()),
         "session": session,

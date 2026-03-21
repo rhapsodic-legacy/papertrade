@@ -1,7 +1,10 @@
+import logging
 from datetime import date
 
 from app.services.market_data import get_quote
 from app.services.supabase_client import get_supabase_admin
+
+logger = logging.getLogger(__name__)
 
 
 async def take_all_snapshots() -> int:
@@ -51,5 +54,14 @@ async def take_all_snapshots() -> int:
         db.table("portfolio_snapshots").upsert(
             rows, on_conflict="user_id,snapshot_date"
         ).execute()
+
+    # Check price alerts using the prices we already fetched
+    try:
+        from app.services.notifications import check_price_alerts
+        # Convert "asset_type:SYMBOL" keys to just "SYMBOL"
+        symbol_prices = {k.split(":", 1)[1]: v for k, v in prices.items()}
+        await check_price_alerts(symbol_prices)
+    except Exception as e:
+        logger.error("Failed to check price alerts: %s", e)
 
     return len(rows)
