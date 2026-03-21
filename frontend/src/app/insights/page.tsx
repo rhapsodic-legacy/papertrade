@@ -60,7 +60,7 @@ const MODEL_LABELS: Record<string, string> = {
   "gemini-flash": "Gemini Flash",
   "gemini-pro": "Gemini Pro",
   mistral: "Mistral",
-  llama: "Llama",
+  llama: "GPT",
 };
 
 type ViewMode = "daily" | "trader-history";

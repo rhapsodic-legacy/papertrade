@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
@@ -26,7 +27,7 @@ const PERSONALITY_COLORS: Record<string, string> = {
 const MODEL_LABELS: Record<string, string> = {
   gemini: "Gemini",
   mistral: "Mistral",
-  cerebras: "Cerebras (Llama)",
+  cerebras: "GPT (Cerebras)",
 };
 
 type Trade = {
@@ -56,7 +57,7 @@ function TradeCard({ trade }: { trade: Trade }) {
       : trade.model.includes("mistral")
         ? "Mistral"
         : trade.model.includes("cerebras") || trade.model.includes("llama") || trade.model.includes("gpt-oss")
-          ? "Llama"
+          ? "GPT"
           : trade.model
     : "Unknown";
 
@@ -332,6 +333,12 @@ export default function LearnPage() {
             See exactly what our 20 AI traders are doing and why. Study their reasoning,
             compare strategies, and find patterns to improve your own trading.
           </p>
+          <div className="mt-3 inline-flex items-center gap-2 bg-blue-900/20 border border-blue-800/50 rounded-lg px-3 py-2">
+            <span className="text-sm text-gray-400">New to trading terms?</span>
+            <Link href="/how-it-works" className="text-sm text-blue-400 hover:text-blue-300 font-medium transition">
+              Trading Basics & Glossary →
+            </Link>
+          </div>
         </div>
 
         {/* Tabs */}

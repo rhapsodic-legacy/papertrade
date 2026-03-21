@@ -43,7 +43,7 @@ const MODEL_COLORS: Record<string, string> = {
   "gemini-flash": "#34d399",
   "gemini-pro": "#10b981",
   mistral: "#f59e0b",
-  llama: "#8b5cf6",
+  gpt: "#8b5cf6",
 };
 
 const SECTOR_COLORS: Record<string, string> = {
@@ -235,6 +235,7 @@ function OverviewTab({ data, onSelectTrader }: { data: ComparisonData; onSelectT
     name: t.display_name.replace(/ \(.*\)/, ""),
     return: t.total_return_pct,
     personality: t.personality,
+    model: t.model,
   }));
 
   return (
@@ -261,7 +262,10 @@ function OverviewTab({ data, onSelectTrader }: { data: ComparisonData; onSelectT
             />
             <Tooltip
               contentStyle={{ backgroundColor: "#1f2937", border: "1px solid #374151", borderRadius: "8px", color: "#fff" }}
-              formatter={(value) => [`${Number(value).toFixed(2)}%`, "Return"]}
+              formatter={(value: unknown, _name: unknown, props: { payload?: { model?: string } }) => {
+                const model = props?.payload?.model || "";
+                return [`${Number(value).toFixed(2)}%`, `Return (${model})`];
+              }}
             />
             <Bar dataKey="return" radius={[4, 4, 0, 0]}>
               {returnChartData.map((entry, i) => (
@@ -275,6 +279,14 @@ function OverviewTab({ data, onSelectTrader }: { data: ComparisonData; onSelectT
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        <div className="flex flex-wrap gap-4 mt-4 justify-center">
+          {Object.entries(PERSONALITY_LABELS).map(([key, label]) => (
+            <div key={key} className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: PERSONALITY_COLORS[key] }} />
+              <span className="text-xs text-gray-400">{label}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Model Comparison */}
@@ -660,6 +672,19 @@ function TraderDetail({ data }: { data: TraderAnalytics }) {
 
 function BenchmarkTab({ data }: { data: any }) {
   const returnColor = (v: number) => (v >= 0 ? "text-green-400" : "text-red-400");
+
+  // Guard against error responses or missing data
+  if (!data || data.error || !data.benchmark || !data.traders || !data.summary) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center">
+        <p className="text-gray-400 mb-2">Benchmark data is not available yet.</p>
+        <p className="text-gray-500 text-sm">
+          {data?.error || "The AI traders need at least a few days of trading data before benchmark comparisons can be generated."}
+        </p>
+      </div>
+    );
+  }
+
   const { benchmark, traders, summary } = data;
 
   // Build chart data — merge SPY series with top 5 traders
@@ -705,7 +730,7 @@ function BenchmarkTab({ data }: { data: any }) {
         <StatCard
           label="Best Trader"
           value={summary.best_trader?.replace(/ \(.*\)/, "") || "N/A"}
-          sub={traders[0] ? `+${traders[0].total_return_pct.toFixed(2)}%` : ""}
+          sub={traders.length > 0 ? `${traders[0].total_return_pct > 0 ? "+" : ""}${traders[0].total_return_pct.toFixed(2)}%` : ""}
         />
       </div>
 

@@ -147,7 +147,7 @@ MODELS = {
         "model_id": "mistral-large-latest",
     },
     "llama": {
-        "label": "Llama",
+        "label": "GPT",
         "api": "cerebras",
         "model_id": "gpt-oss-120b",
     },

@@ -12,11 +12,20 @@ const NAV_LINKS = [
   { href: "/history", label: "History" },
   { href: "/watchlist", label: "Watchlist" },
   { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/insights", label: "AI Insights" },
   { href: "/my-analytics", label: "My Analytics" },
-  { href: "/analytics", label: "AI Analytics" },
-  { href: "/learn", label: "Learn from AI" },
-  { href: "/how-it-works", label: "How It Works" },
+];
+
+const AI_LINKS = [
+  { href: "/insights", label: "AI Insights", desc: "Daily AI commentary" },
+  { href: "/analytics", label: "AI Analytics", desc: "Model & personality performance" },
+  { href: "/learn", label: "Learn from AI", desc: "Study AI trade reasoning" },
+  { href: "/how-it-works", label: "How It Works", desc: "Trading basics & platform guide" },
+];
+
+// All links combined for mobile menu
+const ALL_LINKS = [
+  ...NAV_LINKS,
+  ...AI_LINKS.map((l) => ({ href: l.href, label: l.label })),
 ];
 
 type Notification = {
@@ -71,7 +80,6 @@ function NotificationPanel({
     }
   }, [open]);
 
-  // Close on click outside
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -176,13 +184,62 @@ function NotificationPanel({
   );
 }
 
+function AiDropdown() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 text-gray-300 hover:text-white transition"
+      >
+        AI & Learn
+        <svg
+          className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-2 w-64 bg-gray-900 border border-gray-800 rounded-lg shadow-xl z-50 py-2">
+          {AI_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2.5 hover:bg-gray-800 transition"
+            >
+              <span className="text-sm text-white">{link.label}</span>
+              <span className="block text-xs text-gray-500">{link.desc}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Navbar() {
   const { user, signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Poll unread count every 60s
   useEffect(() => {
     if (!user) return;
     const fetchCount = () => {
@@ -196,10 +253,8 @@ export default function Navbar() {
     return () => clearInterval(interval);
   }, [user]);
 
-  // Reset count when panel closes
   useEffect(() => {
     if (!notifOpen && user) {
-      // Re-fetch count in case user marked things read
       api
         .getUnreadCount()
         .then((res) => setUnreadCount(res.unread_count))
@@ -226,6 +281,7 @@ export default function Navbar() {
                     {link.label}
                   </Link>
                 ))}
+                <AiDropdown />
               </div>
             )}
           </div>
@@ -314,7 +370,7 @@ export default function Navbar() {
       {user && menuOpen && (
         <div className="md:hidden border-t border-gray-800">
           <div className="px-4 py-3 space-y-1">
-            {NAV_LINKS.map((link) => (
+            {ALL_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
