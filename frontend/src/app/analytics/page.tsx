@@ -41,7 +41,7 @@ const PERSONALITY_LABELS: Record<string, string> = {
 
 const MODEL_COLORS: Record<string, string> = {
   "Gemini Flash": "#34d399",
-  "Gemini Pro": "#10b981",
+  "Gemini Pro": "#3b82f6",
   Mistral: "#f59e0b",
   GPT: "#8b5cf6",
 };
