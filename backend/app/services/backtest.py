@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from app.services.supabase_client import get_supabase_admin
 from app.services.market_data import get_stock_candles, STOCK_SECTORS
 from app.services.ai_trader import PERSONALITIES
-from app.services.analytics import _model_label
+from app.services.analytics import _model_label, _clean_display_name
 
 STARTING_BALANCE = 100_000.0
 
@@ -102,7 +102,7 @@ async def get_benchmark_comparison(days: int = 90) -> dict:
 
         traders.append({
             "id": uid,
-            "display_name": profile["display_name"],
+            "display_name": _clean_display_name(profile["display_name"]),
             "model": _model_label(profile["ai_model"]),
             "personality": personality,
             "total_return_pct": round(trader_return, 2),
@@ -197,7 +197,7 @@ async def get_enhancement_comparison() -> dict:
         post_metrics = _compute_period_metrics(post_snaps)
 
         traders.append({
-            "display_name": profile["display_name"],
+            "display_name": _clean_display_name(profile["display_name"]),
             "model": _model_label(profile["ai_model"]),
             "personality": personality,
             "pre_enhancement": pre_metrics,

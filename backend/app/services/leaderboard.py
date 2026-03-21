@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from app.services.supabase_client import get_supabase_admin
-from app.services.analytics import _model_label
+from app.services.analytics import _model_label, _clean_display_name
 
 # Weights for each time period (must sum to 1.0)
 WEIGHTS = {
@@ -111,7 +111,7 @@ async def get_scored_leaderboard(
             weighted_score += WEIGHTS[period] * ret
 
         scored.append({
-            "display_name": profile["display_name"],
+            "display_name": _clean_display_name(profile["display_name"]),
             "score": round(weighted_score, 2),
             "return_1d": period_returns[1],
             "return_7d": period_returns[7],

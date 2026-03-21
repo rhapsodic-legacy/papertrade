@@ -28,6 +28,11 @@ def _model_label(key: str) -> str:
     return MODEL_DISPLAY_LABELS.get(key, key)
 
 
+def _clean_display_name(name: str) -> str:
+    """Replace legacy model names in display names (e.g. 'Vanilla (Llama)' -> 'Vanilla (GPT)')."""
+    return name.replace("Llama", "GPT").replace("llama", "GPT")
+
+
 async def get_trader_analytics(trader_id: str) -> dict:
     """Compute full analytics for a single trader."""
     db = get_supabase_admin()
@@ -345,7 +350,7 @@ async def get_ai_comparison() -> dict:
 
         traders.append({
             "id": uid,
-            "display_name": profile["display_name"],
+            "display_name": _clean_display_name(profile["display_name"]),
             "model": _model_label(profile["ai_model"]),
             "personality": personality,
             "win_rate": trade_metrics["win_rate"],

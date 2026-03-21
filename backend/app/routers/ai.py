@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
 from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
-from app.services.analytics import _model_label
+from app.services.analytics import _model_label, _clean_display_name
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
@@ -21,6 +21,29 @@ async def setup_ai_traders():
         "message": f"AI traders: {created} created, {existing} already existed, {errors} errors",
         "details": results,
     }
+
+
+@router.post("/fix-display-names")
+async def fix_display_names():
+    """One-time: rename 'Llama' to 'GPT' in all DB display_name fields."""
+    db = get_supabase_admin()
+    fixed = {"profiles": 0, "ai_commentary": 0}
+
+    # Fix profiles table
+    profiles = db.table("profiles").select("id, display_name").like("display_name", "%Llama%").execute()
+    for p in profiles.data:
+        new_name = _clean_display_name(p["display_name"])
+        db.table("profiles").update({"display_name": new_name}).eq("id", p["id"]).execute()
+        fixed["profiles"] += 1
+
+    # Fix ai_commentary table
+    commentary = db.table("ai_commentary").select("id, display_name").like("display_name", "%Llama%").execute()
+    for c in commentary.data:
+        new_name = _clean_display_name(c["display_name"])
+        db.table("ai_commentary").update({"display_name": new_name}).eq("id", c["id"]).execute()
+        fixed["ai_commentary"] += 1
+
+    return {"message": "Display names fixed", "updated": fixed}
 
 
 @router.post("/trade/trigger")
@@ -89,7 +112,7 @@ async def ai_trade_feed(
                 personality_key = pkey
                 break
         profile_map[p["id"]] = {
-            "display_name": p["display_name"],
+            "display_name": _clean_display_name(p["display_name"]),
             "ai_model": p["ai_model"],
             "personality": personality_key,
         }
@@ -164,7 +187,7 @@ async def list_ai_traders():
                 break
         traders.append({
             "id": p["id"],
-            "display_name": p["display_name"],
+            "display_name": _clean_display_name(p["display_name"]),
             "ai_model": _model_label(p["ai_model"]),
             "personality": personality_key,
         })
@@ -243,7 +266,7 @@ async def get_ai_trader_profile(trader_id: str):
     total_value = portfolio["cash"] + invested_value
 
     return {
-        "display_name": profile["display_name"],
+        "display_name": _clean_display_name(profile["display_name"]),
         "ai_model": _model_label(profile["ai_model"]),
         "personality": personality_key,
         "personality_description": PERSONALITIES[personality_key]["prompt"] if personality_key else None,

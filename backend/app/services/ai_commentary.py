@@ -12,6 +12,7 @@ from app.services.ai_trader import (
     _get_ai_portfolio,
 )
 from app.services.supabase_client import get_supabase_admin
+from app.services.analytics import _clean_display_name, _model_label
 
 COMMENTARY_SYSTEM = """\
 You are an AI trader writing a short daily blog post about your trading activity.
@@ -248,9 +249,9 @@ async def get_commentary(
                 headline = first_sentence.rstrip(".")
 
         entries.append({
-            "display_name": row["display_name"],
+            "display_name": _clean_display_name(row["display_name"]),
             "personality": row["personality"],
-            "model": row["model"],
+            "model": _model_label(row["model"]) if row["model"] else row["model"],
             "headline": headline,
             "commentary": commentary_text,
             "trades_summary": trades_summary,
@@ -293,9 +294,9 @@ async def get_trader_commentary(
                 headline = first_sentence.rstrip(".")
 
         entries.append({
-            "display_name": row["display_name"],
+            "display_name": _clean_display_name(row["display_name"]),
             "personality": row["personality"],
-            "model": row["model"],
+            "model": _model_label(row["model"]) if row["model"] else row["model"],
             "headline": headline,
             "commentary": commentary_text,
             "trades_summary": trades_summary,
