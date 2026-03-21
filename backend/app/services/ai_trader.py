@@ -8,7 +8,13 @@ logger = logging.getLogger(__name__)
 
 from app.config import get_settings
 from app.services.market_brief import get_latest_brief
-from app.services.market_data import get_quote, TOP_STOCKS, CRYPTO_MAP, STOCK_SECTORS
+from app.services.market_data import get_quote, get_stock_candles, get_crypto_history, TOP_STOCKS, CRYPTO_MAP, STOCK_SECTORS
+from app.services.pattern_recognition import analyze_patterns
+from app.services.portfolio_optimizer import (
+    compute_portfolio_correlations,
+    compute_target_allocation,
+    format_optimizer_output,
+)
 from app.services.supabase_client import get_supabase_admin
 
 # ---------------------------------------------------------------------------
@@ -182,6 +188,7 @@ You are a professional portfolio manager running a paper trading portfolio.
 10. News headlines with summaries (market-moving events)
 11. Your current portfolio with sector exposure, risk metrics, and RISK ALERTS
 12. Your recent trading history and what's working/failing
+13. Agentic pipeline analysis: candlestick patterns (doji, hammer, engulfing, morning/evening star), golden/death cross signals, support/resistance levels, volume anomalies, correlation warnings for held positions, and portfolio optimizer suggestions (buy/sell/trim/diversify)
 
 ## Professional Decision Framework
 Follow this checklist for EVERY trade decision:
@@ -877,7 +884,7 @@ def _format_stocks_by_sector() -> str:
     return "\n".join(lines)
 
 
-async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close") -> list[dict]:
+async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close", agentic_context: str = "") -> list[dict]:
     """Ask an AI model for its trading decisions."""
     settings = get_settings()
     personality = PERSONALITIES[personality_key]
@@ -947,8 +954,13 @@ Positions:
 ## Your Trading Memory
 {trade_memory}
 
-Based on ALL the data above, what trades do you want to make today? \
-Address any MANDATORY RISK ACTIONS first, then follow your strategy's BUY/SELL criteria."""
+## Agentic Analysis (pre-computed by your trading pipeline)
+{agentic_context if agentic_context else "No additional analysis available."}
+
+Based on ALL the data above — including the pattern recognition, correlation warnings, \
+and optimizer suggestions — what trades do you want to make today? \
+Address any MANDATORY RISK ACTIONS first, consider the optimizer suggestions, \
+then follow your strategy's BUY/SELL criteria."""
 
     # Build system prompt with optional session context
     system_prompt = TRADE_SYSTEM
@@ -1136,8 +1148,45 @@ async def _run_trader(
         recent_trades = _get_ai_trade_history(db, user_id, limit=15)
         trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
 
-        # Ask AI for trades
-        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session)
+        # --- Agentic Pipeline Steps 3 & 4 (zero LLM cost) ---
+
+        # Step 3: Pattern Recognition on held + top signal assets
+        held_symbols = [p["symbol"] for p in portfolio["positions"]]
+        candle_data: dict[str, list[dict]] = {}
+        pattern_results: dict[str, dict] = {}
+
+        for sym in held_symbols[:10]:  # limit to avoid slow fetches
+            candles = await get_stock_candles(sym, days=60)
+            if not candles:
+                candles = await get_crypto_history(sym, days=60)
+            if candles and len(candles) >= 5:
+                candle_data[sym] = candles
+                pattern_results[sym] = analyze_patterns(candles, symbol=sym)
+
+        # Step 4: Portfolio Optimizer
+        # Gather signal scores from brief
+        all_signals = {}
+        for sym, tech in brief.get("stock_technicals", {}).items():
+            if tech.get("signal"):
+                all_signals[sym] = tech["signal"]
+        for sym, tech in brief.get("crypto_technicals", {}).items():
+            if tech.get("signal"):
+                all_signals[sym] = tech["signal"]
+
+        correlations = compute_portfolio_correlations(portfolio["positions"], candle_data)
+
+        risk_params = PERSONALITIES[personality_key].get("risk_params", {})
+        total_value = portfolio["cash"] + sum(p.get("market_value", 0) for p in portfolio["positions"])
+        allocation = compute_target_allocation(
+            all_signals, personality_key, risk_params,
+            portfolio["positions"], portfolio["cash"], total_value,
+        )
+
+        # Format agentic context for the LLM prompt
+        agentic_context = format_optimizer_output(correlations, allocation, pattern_results)
+
+        # Ask AI for trades (with agentic context injected)
+        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context=agentic_context)
 
         # Execute trades
         executed = []

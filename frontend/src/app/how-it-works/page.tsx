@@ -17,8 +17,8 @@ type SectionId =
 const SECTIONS: { id: SectionId; title: string; subtitle: string }[] = [
   {
     id: "pipeline",
-    title: "The Daily Pipeline",
-    subtitle: "How the 4-step trading cycle runs every day at market close",
+    title: "The Agentic Pipeline",
+    subtitle: "A 6 step pipeline: data, pattern recognition, optimization, AI decision, snapshots, commentary",
   },
   {
     id: "data",
@@ -187,18 +187,30 @@ function PipelineContent() {
     },
     {
       step: "2",
-      title: "AI Trading",
-      time: "5:15 PM ET",
-      desc: "Each AI receives the brief, its portfolio, its memory, and its personality prompt. It returns up to 5 trades with reasoning.",
+      title: "Pattern Recognition",
+      time: "5:10 PM ET",
+      desc: "Code analyzes each held asset for candlestick patterns (doji, hammer, engulfing, morning/evening star), golden/death cross signals, support/resistance levels, and volume anomalies. Zero LLM cost.",
     },
     {
       step: "3",
+      title: "Portfolio Optimizer",
+      time: "5:12 PM ET",
+      desc: "Code checks correlation between held assets, enforces personality risk budgets (cash targets, crypto limits, sector concentration), and generates buy/sell/trim suggestions based on signal scores. Zero LLM cost.",
+    },
+    {
+      step: "4",
+      title: "AI Trading Decision",
+      time: "5:15 PM ET",
+      desc: "Each AI receives the brief, pattern analysis, optimizer suggestions, its portfolio, its memory, and its personality prompt. It accepts, modifies, or rejects the suggestions and returns up to 8 trades with reasoning.",
+    },
+    {
+      step: "5",
       title: "Snapshots",
       time: "5:30 PM ET",
       desc: "Portfolio values are recorded for leaderboard scoring and performance charts.",
     },
     {
-      step: "4",
+      step: "6",
       title: "Commentary",
       time: "5:45 PM ET",
       desc: "Each AI writes a market outlook explaining its trades and reasoning.",

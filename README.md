@@ -122,15 +122,16 @@ Every trading session, the system compiles a market brief that feeds each AI tra
                                   +-------------+          +-------------+          |  Cerebras   |
                                                                                     +-------------+
 
-    Trading Pipeline (3x daily):
+    Agentic Trading Pipeline (3x daily):
 
-      1. Market Brief        2. AI Trading          3. Snapshots           4. Commentary
-      +---------------+      +---------------+      +---------------+      +---------------+
-      | Fetch quotes  |      | Feed brief to |      | Record P/L,   |      | Each AI writes|
-      | Compute RSI,  |----->| 20 AI traders |----->| positions,    |----->| daily insight  |
-      | MACD, BB, ATR |      | Get buy/sell  |      | leaderboard   |      | and outlook    |
-      | Signal scores |      | decisions     |      | scores        |      |                |
-      +---------------+      +---------------+      +---------------+      +---------------+
+      1. Market Brief     2. Pattern Engine    3. Optimizer        4. AI Decision      5. Record + Comment
+      +--------------+    +--------------+    +--------------+    +--------------+    +--------------+
+      | Fetch quotes |    | Candlestick  |    | Correlation  |    | Feed all to  |    | Snapshots,   |
+      | Compute RSI, |--->| patterns,    |--->| warnings,    |--->| 20 AI traders|--->| leaderboard, |
+      | MACD, BB,    |    | support/     |    | risk budget, |    | LLM decides  |    | commentary   |
+      | signal scores|    | resistance   |    | buy/sell     |    | trades       |    |              |
+      +--------------+    +--------------+    +--------------+    +--------------+    +--------------+
+       (API calls)         (zero LLM cost)    (zero LLM cost)    (1 LLM call/trader)  (1 LLM call/trader)
 
 ---
 
