@@ -13,7 +13,6 @@ from app.services.pattern_recognition import analyze_patterns
 from app.services.portfolio_optimizer import (
     compute_portfolio_correlations,
     compute_target_allocation,
-    format_optimizer_output,
 )
 from app.services.supabase_client import get_supabase_admin
 
@@ -39,6 +38,12 @@ PERSONALITIES = {
             "max_hold_days": 30,
             "min_sells_with_positions": 1,
         },
+        "toolkit": [
+            {"module": "macro", "weight": 9},
+            {"module": "technicals", "weight": 8},
+            {"module": "fundamentals", "weight": 7},
+            {"module": "sentiment", "weight": 6},
+        ],
     },
     "steady_eddie": {
         "name": "Steady Eddie",
@@ -62,6 +67,12 @@ PERSONALITIES = {
             "max_hold_days": 45,
             "min_sells_with_positions": 1,
         },
+        "toolkit": [
+            {"module": "fundamentals", "weight": 10},
+            {"module": "macro", "weight": 9},
+            {"module": "optimizer", "weight": 8},
+            {"module": "technicals", "weight": 7},
+        ],
     },
     "yolo_bot": {
         "name": "YOLO Bot",
@@ -85,6 +96,12 @@ PERSONALITIES = {
             "max_hold_days": 14,
             "min_sells_with_positions": 1,
         },
+        "toolkit": [
+            {"module": "momentum", "weight": 10},
+            {"module": "technicals", "weight": 9},
+            {"module": "patterns", "weight": 8},
+            {"module": "sentiment", "weight": 7},
+        ],
     },
     "contrarian_carl": {
         "name": "Contrarian Carl",
@@ -109,6 +126,12 @@ PERSONALITIES = {
             "max_hold_days": 60,
             "min_sells_with_positions": 1,
         },
+        "toolkit": [
+            {"module": "sentiment", "weight": 9, "invert": True},
+            {"module": "fundamentals", "weight": 8},
+            {"module": "patterns", "weight": 7},
+            {"module": "macro", "weight": 6},
+        ],
     },
     "crypto_chad": {
         "name": "Crypto Chad",
@@ -132,6 +155,12 @@ PERSONALITIES = {
             "max_hold_days": 21,
             "min_sells_with_positions": 1,
         },
+        "toolkit": [
+            {"module": "momentum", "weight": 10},
+            {"module": "technicals", "weight": 9},
+            {"module": "patterns", "weight": 8},
+            {"module": "sentiment", "weight": 6},
+        ],
     },
 }
 
@@ -175,20 +204,11 @@ AI_TRADERS = [
 TRADE_SYSTEM = """\
 You are a professional portfolio manager running a paper trading portfolio.
 
-## Data You Will Receive
-1. Your personality/strategy description with specific BUY/SELL criteria
-2. Market regime analysis (bullish/bearish, growth vs value rotation, rate direction, safe haven demand)
-3. Sector performance breakdown (which sectors are leading/lagging today)
-4. Stock fundamentals (PE ratio, beta, dividend yield, 52-week range, market cap)
-5. Technical indicators: RSI, SMA 20/50, EMA 12/26, MACD (histogram crossovers), Bollinger Bands (squeeze/breakout), ATR (for stop sizing), momentum, relative volume
-6. Composite signal score per asset: combines RSI + trend + MACD + momentum + Bollinger + volume into a single BUY/SELL/NEUTRAL score
-7. Analyst consensus (buy/hold/sell counts from Wall Street)
-8. Earnings calendar (upcoming catalysts — can cause 5-20% swings)
-9. Crypto market data (rank, market cap, volume, distance from all-time high)
-10. News headlines with summaries (market-moving events)
-11. Your current portfolio with sector exposure, risk metrics, and RISK ALERTS
-12. Your recent trading history and what's working/failing
-13. Agentic pipeline analysis: candlestick patterns (doji, hammer, engulfing, morning/evening star), golden/death cross signals, support/resistance levels, volume anomalies, correlation warnings for held positions, and portfolio optimizer suggestions (buy/sell/trim/diversify)
+## Your Data
+You receive data from a curated set of analysis modules tailored to your trading strategy.
+Your "Data Toolkit" section lists which modules you have and why they were selected for you.
+Focus your analysis on the modules provided — they match your strategy's strengths.
+You always have: your portfolio state, risk alerts, and supported asset lists.
 
 ## Professional Decision Framework
 Follow this checklist for EVERY trade decision:
@@ -520,245 +540,6 @@ def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _format_enriched_brief(brief: dict) -> str:
-    """Format the enriched market brief sections for the AI prompt."""
-    sections = []
-
-    # Market Regime (new — macro context)
-    regime = brief.get("market_regime", {})
-    if regime:
-        regime_lines = []
-        if "market_trend" in regime:
-            spy_rsi = regime.get('spy_rsi')
-            spy_7d = regime.get('spy_7d')
-            spy_30d = regime.get('spy_30d')
-            parts = [f"Overall Market: {regime['market_trend']}"]
-            detail = []
-            if spy_rsi is not None:
-                detail.append(f"SPY RSI={spy_rsi}")
-            if spy_7d is not None:
-                detail.append(f"7d={spy_7d:+.1f}%")
-            if spy_30d is not None:
-                detail.append(f"30d={spy_30d:+.1f}%")
-            if detail:
-                parts[0] += f" ({', '.join(detail)})"
-            regime_lines.append(f"  {parts[0]}")
-        if "growth_vs_value" in regime:
-            regime_lines.append(f"  Rotation: {regime['growth_vs_value']} (QQQ-SPY spread: {regime.get('qqq_spy_spread_7d', 0):+.1f}%)")
-        if "rate_signal" in regime:
-            regime_lines.append(f"  Interest Rates: {regime['rate_signal']} (TLT 7d: {regime.get('tlt_7d', 0):+.1f}%)")
-        if "safe_haven_demand" in regime:
-            regime_lines.append(f"  Safe Haven Demand: {regime['safe_haven_demand']} (GLD 7d: {regime.get('gld_7d', 0):+.1f}%)")
-        if "small_cap_signal" in regime:
-            regime_lines.append(f"  Small Cap Health: {regime['small_cap_signal']} (IWM 7d: {regime.get('iwm_7d', 0):+.1f}%)")
-        if regime_lines:
-            sections.append("### MARKET REGIME (read this first — it sets the context)\n" + "\n".join(regime_lines))
-
-    # Sector Performance (new — rotation signals)
-    sector_perf = brief.get("sector_performance", {})
-    if sector_perf:
-        sorted_sectors = sorted(sector_perf.items(), key=lambda x: x[1]["avg_change_pct"], reverse=True)
-        sector_lines = []
-        for sector, data in sorted_sectors:
-            sector_lines.append(
-                f"  {sector}: {data['avg_change_pct']:+.2f}% avg ({data['stocks_up']} up / {data['stocks_down']} down)"
-            )
-        sections.append("### SECTOR PERFORMANCE (today's rotation)\n" + "\n".join(sector_lines))
-
-    # Fundamentals for stocks (enhanced with volatility and sector)
-    fundamentals = brief.get("fundamentals", {})
-    volatility = brief.get("stock_volatility", {})
-    if fundamentals:
-        fund_lines = []
-        for sym, f in list(fundamentals.items())[:20]:
-            parts = []
-            sector = STOCK_SECTORS.get(sym, "?")
-            parts.append(f"[{sector}]")
-            if f.get("pe_ratio"):
-                parts.append(f"PE {f['pe_ratio']:.1f}")
-            if f.get("beta"):
-                parts.append(f"Beta {f['beta']:.2f}")
-            if f.get("dividend_yield"):
-                parts.append(f"Div {f['dividend_yield']:.1f}%")
-            if f.get("52w_high") and f.get("52w_low"):
-                parts.append(f"52w ${f['52w_low']:.0f}-${f['52w_high']:.0f}")
-            if f.get("market_cap_m"):
-                mcap = f["market_cap_m"]
-                if mcap > 1000:
-                    parts.append(f"MCap ${mcap/1000:.0f}B")
-                else:
-                    parts.append(f"MCap ${mcap:.0f}M")
-            vol = volatility.get(sym)
-            if vol:
-                vol_label = "HIGH" if vol > 40 else "LOW" if vol < 20 else ""
-                parts.append(f"Vol {vol}%{' ' + vol_label if vol_label else ''}")
-            if len(parts) > 1:  # more than just sector
-                fund_lines.append(f"  {sym}: {', '.join(parts)}")
-        if fund_lines:
-            sections.append("### Stock Fundamentals & Risk\n" + "\n".join(fund_lines))
-
-    # Analyst recommendations
-    recs = brief.get("analyst_recommendations", {})
-    if recs:
-        rec_lines = []
-        for sym, r in list(recs.items())[:20]:
-            total = r["buy"] + r["hold"] + r["sell"]
-            if total > 0:
-                buy_pct = round(r["buy"] / total * 100)
-                signal = "STRONG BUY" if buy_pct > 70 else "MOSTLY BUY" if buy_pct > 50 else "MIXED" if r["hold"] > r["sell"] else "BEARISH"
-                rec_lines.append(
-                    f"  {sym}: {r['buy']} Buy / {r['hold']} Hold / {r['sell']} Sell → {signal}"
-                )
-        if rec_lines:
-            sections.append("### Analyst Consensus\n" + "\n".join(rec_lines))
-
-    # Earnings calendar (enhanced with EPS estimates)
-    earnings = brief.get("earnings_calendar", [])
-    if earnings:
-        earn_lines = []
-        for e in earnings[:10]:
-            eps_str = f" (est EPS ${e['estimate_eps']:.2f})" if e.get("estimate_eps") else ""
-            earn_lines.append(f"  ⚠ {e['symbol']} reports {e['date']}{eps_str} — expect volatility")
-        sections.append("### Upcoming Earnings (next 7 days)\n" + "\n".join(earn_lines))
-
-    # Technical indicators (enhanced with MACD, Bollinger, ATR, signal score)
-    technicals = brief.get("stock_technicals", {})
-    if technicals:
-        tech_lines = []
-        for sym, t in list(technicals.items())[:20]:
-            parts = []
-            # Signal score (composite, read first)
-            sig = t.get("signal", {})
-            if sig.get("label"):
-                parts.append(f"Signal: {sig['label']} ({sig['score']:+d})")
-            if "rsi_14" in t:
-                rsi = t["rsi_14"]
-                label = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else ""
-                parts.append(f"RSI {rsi}{' ' + label if label else ''}")
-            if "vs_sma_20" in t:
-                direction = "above" if t["vs_sma_20"] > 0 else "below"
-                parts.append(f"{direction} SMA20 by {abs(t['vs_sma_20']):.1f}%")
-            if "vs_sma_50" in t:
-                direction = "above" if t["vs_sma_50"] > 0 else "below"
-                parts.append(f"{direction} SMA50 by {abs(t['vs_sma_50']):.1f}%")
-            # MACD
-            macd = t.get("macd", {})
-            if macd.get("histogram") is not None:
-                hist = macd["histogram"]
-                macd_label = "BULLISH" if hist > 0 else "BEARISH"
-                parts.append(f"MACD {macd_label} (hist {hist:+.2f})")
-            # Bollinger Bands
-            bb = t.get("bollinger_bands", {})
-            if bb.get("pct_b") is not None:
-                pct_b = bb["pct_b"]
-                bb_label = "near upper band" if pct_b > 0.8 else "near lower band" if pct_b < 0.2 else "mid band"
-                squeeze = ", SQUEEZE" if bb.get("bandwidth", 99) < 5 else ""
-                parts.append(f"BB {bb_label} ({pct_b:.0%}){squeeze}")
-            # ATR
-            if "atr_14" in t:
-                parts.append(f"ATR ${t['atr_14']:.2f}")
-            if "7d_return" in t:
-                parts.append(f"7d {t['7d_return']:+.1f}%")
-            if "30d_return" in t:
-                parts.append(f"30d {t['30d_return']:+.1f}%")
-            if "relative_volume" in t:
-                rv = t["relative_volume"]
-                vol_label = "HIGH VOLUME" if rv > 1.5 else "LOW VOLUME" if rv < 0.5 else ""
-                parts.append(f"RelVol {rv:.1f}x{' ' + vol_label if vol_label else ''}")
-            if parts:
-                tech_lines.append(f"  {sym}: {', '.join(parts)}")
-        if tech_lines:
-            sections.append("### Stock Technical Indicators\n" + "\n".join(tech_lines))
-
-    # Crypto technicals (RSI, SMA, MACD, Bollinger, signal score)
-    crypto_tech = brief.get("crypto_technicals", {})
-    if crypto_tech:
-        ctech_lines = []
-        for sym, t in list(crypto_tech.items())[:15]:
-            parts = []
-            sig = t.get("signal", {})
-            if sig.get("label"):
-                parts.append(f"Signal: {sig['label']} ({sig['score']:+d})")
-            if "rsi_14" in t:
-                rsi = t["rsi_14"]
-                label = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else ""
-                parts.append(f"RSI {rsi}{' ' + label if label else ''}")
-            if "vs_sma_20" in t:
-                direction = "above" if t["vs_sma_20"] > 0 else "below"
-                parts.append(f"{direction} SMA20 by {abs(t['vs_sma_20']):.1f}%")
-            if "vs_sma_50" in t:
-                direction = "above" if t["vs_sma_50"] > 0 else "below"
-                parts.append(f"{direction} SMA50 by {abs(t['vs_sma_50']):.1f}%")
-            macd = t.get("macd", {})
-            if macd.get("histogram") is not None:
-                hist = macd["histogram"]
-                macd_label = "BULLISH" if hist > 0 else "BEARISH"
-                parts.append(f"MACD {macd_label} (hist {hist:+.2f})")
-            bb = t.get("bollinger_bands", {})
-            if bb.get("pct_b") is not None:
-                pct_b = bb["pct_b"]
-                bb_label = "near upper" if pct_b > 0.8 else "near lower" if pct_b < 0.2 else "mid"
-                parts.append(f"BB {bb_label} ({pct_b:.0%})")
-            if "7d_return" in t:
-                parts.append(f"7d {t['7d_return']:+.1f}%")
-            if "30d_return" in t:
-                parts.append(f"30d {t['30d_return']:+.1f}%")
-            if parts:
-                ctech_lines.append(f"  {sym}: {', '.join(parts)}")
-        if ctech_lines:
-            sections.append("### Crypto Technical Indicators\n" + "\n".join(ctech_lines))
-
-    # Crypto market data (fundamentals)
-    crypto_data = brief.get("crypto_market_data", {})
-    if crypto_data:
-        crypto_lines = []
-        for sym, c in list(crypto_data.items())[:15]:
-            parts = []
-            if c.get("market_cap_rank"):
-                parts.append(f"Rank #{c['market_cap_rank']}")
-            if c.get("market_cap_b"):
-                parts.append(f"MCap ${c['market_cap_b']}B")
-            if c.get("volume_24h_m"):
-                parts.append(f"24h Vol ${c['volume_24h_m']}M")
-            if c.get("ath_drop_pct") is not None:
-                pct = c["ath_drop_pct"]
-                label = "NEAR ATH" if pct < 10 else "BIG DISCOUNT" if pct > 50 else ""
-                parts.append(f"{pct}% below ATH{' — ' + label if label else ''}")
-            if parts:
-                crypto_lines.append(f"  {sym}: {', '.join(parts)}")
-        if crypto_lines:
-            sections.append("### Crypto Market Data\n" + "\n".join(crypto_lines))
-
-    # Company-specific news for top movers (NEW)
-    company_news = brief.get("company_news", {})
-    if company_news:
-        news_lines = []
-        for sym, articles in company_news.items():
-            for a in articles:
-                summary = f" — {a['summary']}" if a.get("summary") else ""
-                news_lines.append(f"  {sym}: {a['headline']}{summary}")
-        if news_lines:
-            sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
-
-    # Day-over-day context (NEW — regime/sector shifts from yesterday)
-    dod = brief.get("day_over_day", {})
-    if dod:
-        dod_lines = []
-        if "regime_shift" in dod:
-            dod_lines.append(f"  Market regime: {dod['regime_shift']}")
-        if "spy_momentum_change" in dod:
-            change = dod["spy_momentum_change"]
-            direction = "accelerating" if change > 0 else "decelerating"
-            dod_lines.append(f"  SPY momentum {direction} ({change:+.2f}% shift)")
-        if "sector_shifts" in dod:
-            for shift in dod["sector_shifts"]:
-                dod_lines.append(f"  {shift}")
-        if dod_lines:
-            sections.append("### DAY-OVER-DAY CHANGES (vs yesterday)\n" + "\n".join(dod_lines))
-
-    return "\n\n".join(sections) if sections else ""
-
-
 def _compute_portfolio_risk(portfolio: dict, personality_key: str = None) -> str:
     """Compute portfolio risk metrics: sector exposure, concentration, unrealized P&L.
     This gives AIs the self-awareness to manage risk like a professional.
@@ -872,95 +653,30 @@ def _compute_portfolio_risk(portfolio: dict, personality_key: str = None) -> str
     return "\n".join(lines)
 
 
-def _format_stocks_by_sector() -> str:
-    """Format supported stocks grouped by sector for the AI prompt."""
-    by_sector: dict[str, list[str]] = {}
-    for sym, name in TOP_STOCKS.items():
-        sector = STOCK_SECTORS.get(sym, "Other")
-        by_sector.setdefault(sector, []).append(f"{sym} ({name})")
-    lines = []
-    for sector in sorted(by_sector.keys()):
-        lines.append(f"  {sector}: {', '.join(by_sector[sector])}")
-    return "\n".join(lines)
-
-
-async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close", agentic_context: str = "") -> list[dict]:
+async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close", agentic_context_data: dict | None = None) -> list[dict]:
     """Ask an AI model for its trading decisions."""
     settings = get_settings()
     personality = PERSONALITIES[personality_key]
     model_cfg = MODELS[model_key]
 
-    # Build the user message
-    supported_crypto = [{"symbol": s, "name": c["name"]} for s, c in CRYPTO_MAP.items()]
-
-    enriched_sections = _format_enriched_brief(brief)
-
-    # Format news with summaries (not just headlines)
-    news_items = brief.get("news", [])[:10]
-    news_text = "\n".join(
-        f"  • {n['headline']}\n    {n.get('summary', '')[:200]}"
-        if n.get("summary")
-        else f"  • {n['headline']}"
-        for n in news_items
-    ) if news_items else "  No news available."
-
     # Portfolio risk analysis (with personality-specific risk alerts)
     risk_analysis = _compute_portfolio_risk(portfolio, personality_key)
-
-    # Format risk rules for this personality
     risk_params = personality.get("risk_params", {})
-    risk_rules_text = ""
-    if risk_params:
-        risk_rules_text = f"""
-## Your Risk Rules (ENFORCED)
-- Stop-loss: sell any position down {risk_params.get('stop_loss_pct', -10)}% or more
-- Take-profit: sell any position up +{risk_params.get('take_profit_pct', 20)}% or more
-- Max position size: {risk_params.get('max_position_pct', 15)}% of portfolio
-- Max hold period: {risk_params.get('max_hold_days', 30)} days for stale positions (<3% move)
-- If you have 3+ positions, include at least 1 sell in your trades today
-"""
 
-    user_msg = f"""## Your Strategy
-{personality['prompt']}
-{risk_rules_text}
-## Today's Market Brief ({brief.get('date', 'today')})
+    # Build the user message via modular toolkit
+    from app.services.rag_toolkit import assemble_toolkit_prompt
 
-{enriched_sections}
-
-### Top Gainers
-{json.dumps(brief.get('top_gainers', []), indent=2)}
-
-### Top Losers
-{json.dumps(brief.get('top_losers', []), indent=2)}
-
-### Market News (headlines + context)
-{news_text}
-
-### Supported Stocks (by sector)
-{_format_stocks_by_sector()}
-
-### Supported Crypto
-{json.dumps(supported_crypto, indent=2)}
-
-## Your Current Portfolio
-Cash: ${portfolio['cash']:,.2f}
-Total Value: ${portfolio['cash'] + sum(p['market_value'] for p in portfolio['positions']):,.2f}
-Positions:
-{json.dumps(portfolio['positions'], indent=2) if portfolio['positions'] else 'None — you have no positions yet.'}
-
-## Portfolio Risk Analysis
-{risk_analysis}
-
-## Your Trading Memory
-{trade_memory}
-
-## Agentic Analysis (pre-computed by your trading pipeline)
-{agentic_context if agentic_context else "No additional analysis available."}
-
-Based on ALL the data above — including the pattern recognition, correlation warnings, \
-and optimizer suggestions — what trades do you want to make today? \
-Address any MANDATORY RISK ACTIONS first, consider the optimizer suggestions, \
-then follow your strategy's BUY/SELL criteria."""
+    user_msg = assemble_toolkit_prompt(
+        personality_key=personality_key,
+        personality_prompt=personality["prompt"],
+        toolkit_config=personality.get("toolkit", []),
+        brief=brief,
+        portfolio=portfolio,
+        risk_params=risk_params,
+        risk_analysis=risk_analysis,
+        trade_memory=trade_memory,
+        agentic_data=agentic_context_data or {},
+    )
 
     # Build system prompt with optional session context
     system_prompt = TRADE_SYSTEM
@@ -1153,45 +869,61 @@ async def _run_trader(
         recent_trades = _get_ai_trade_history(db, user_id, limit=15)
         trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
 
-        # --- Agentic Pipeline Steps 3 & 4 (zero LLM cost) ---
+        # --- Agentic Pipeline Steps 3 & 4 (conditional on toolkit) ---
+        personality = PERSONALITIES[personality_key]
+        toolkit_modules = {t["module"] for t in personality.get("toolkit", [])}
 
-        # Step 3: Pattern Recognition on held + top signal assets
         held_symbols = [p["symbol"] for p in portfolio["positions"]]
         candle_data: dict[str, list[dict]] = {}
         pattern_results: dict[str, dict] = {}
+        correlations: list[dict] = []
+        allocation: dict = {}
 
-        for sym in held_symbols[:10]:  # limit to avoid slow fetches
-            candles = await get_stock_candles(sym, days=60)
-            if not candles:
-                candles = await get_crypto_history(sym, days=60)
-            if candles and len(candles) >= 5:
-                candle_data[sym] = candles
-                pattern_results[sym] = analyze_patterns(candles, symbol=sym)
+        # Step 3: Pattern Recognition (only if "patterns" in toolkit)
+        if "patterns" in toolkit_modules:
+            for sym in held_symbols[:10]:
+                candles = await get_stock_candles(sym, days=60)
+                if not candles:
+                    candles = await get_crypto_history(sym, days=60)
+                if candles and len(candles) >= 5:
+                    candle_data[sym] = candles
+                    pattern_results[sym] = analyze_patterns(candles, symbol=sym)
 
-        # Step 4: Portfolio Optimizer
-        # Gather signal scores from brief
-        all_signals = {}
-        for sym, tech in brief.get("stock_technicals", {}).items():
-            if tech.get("signal"):
-                all_signals[sym] = tech["signal"]
-        for sym, tech in brief.get("crypto_technicals", {}).items():
-            if tech.get("signal"):
-                all_signals[sym] = tech["signal"]
+        # Step 4: Portfolio Optimizer (only if "optimizer" in toolkit)
+        if "optimizer" in toolkit_modules:
+            # Need candle data for correlations even if patterns not in toolkit
+            if not candle_data:
+                for sym in held_symbols[:10]:
+                    candles = await get_stock_candles(sym, days=60)
+                    if not candles:
+                        candles = await get_crypto_history(sym, days=60)
+                    if candles and len(candles) >= 5:
+                        candle_data[sym] = candles
 
-        correlations = compute_portfolio_correlations(portfolio["positions"], candle_data)
+            all_signals = {}
+            for sym, tech in brief.get("stock_technicals", {}).items():
+                if tech.get("signal"):
+                    all_signals[sym] = tech["signal"]
+            for sym, tech in brief.get("crypto_technicals", {}).items():
+                if tech.get("signal"):
+                    all_signals[sym] = tech["signal"]
 
-        risk_params = PERSONALITIES[personality_key].get("risk_params", {})
-        total_value = portfolio["cash"] + sum(p.get("market_value", 0) for p in portfolio["positions"])
-        allocation = compute_target_allocation(
-            all_signals, personality_key, risk_params,
-            portfolio["positions"], portfolio["cash"], total_value,
-        )
+            correlations = compute_portfolio_correlations(portfolio["positions"], candle_data)
 
-        # Format agentic context for the LLM prompt
-        agentic_context = format_optimizer_output(correlations, allocation, pattern_results)
+            risk_params = personality.get("risk_params", {})
+            total_value = portfolio["cash"] + sum(p.get("market_value", 0) for p in portfolio["positions"])
+            allocation = compute_target_allocation(
+                all_signals, personality_key, risk_params,
+                portfolio["positions"], portfolio["cash"], total_value,
+            )
 
-        # Ask AI for trades (with agentic context injected)
-        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context=agentic_context)
+        # Ask AI for trades (with modular toolkit prompt)
+        agentic_data = {
+            "pattern_results": pattern_results,
+            "correlations": correlations,
+            "allocation": allocation,
+        }
+        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data)
 
         # Execute trades
         executed = []

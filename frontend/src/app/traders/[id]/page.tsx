@@ -35,6 +35,17 @@ const PERSONALITY_BG: Record<string, string> = {
   crypto_chad: "bg-orange-900/40",
 };
 
+const TOOLKIT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  blue: { bg: "bg-blue-900/30", text: "text-blue-400", border: "border-blue-800" },
+  purple: { bg: "bg-purple-900/30", text: "text-purple-400", border: "border-purple-800" },
+  green: { bg: "bg-green-900/30", text: "text-green-400", border: "border-green-800" },
+  amber: { bg: "bg-amber-900/30", text: "text-amber-400", border: "border-amber-800" },
+  red: { bg: "bg-red-900/30", text: "text-red-400", border: "border-red-800" },
+  teal: { bg: "bg-teal-900/30", text: "text-teal-400", border: "border-teal-800" },
+  indigo: { bg: "bg-indigo-900/30", text: "text-indigo-400", border: "border-indigo-800" },
+  gray: { bg: "bg-gray-900/30", text: "text-gray-400", border: "border-gray-800" },
+};
+
 const PERSONALITY_DESCRIPTIONS: Record<string, { summary: string; strategy: string; buySignals: string; sellSignals: string; riskProfile: string }> = {
   vanilla: {
     summary: "A balanced portfolio manager focused on risk-adjusted returns through diversification.",
@@ -73,11 +84,23 @@ const PERSONALITY_DESCRIPTIONS: Record<string, { summary: string; strategy: stri
   },
 };
 
+interface ToolkitModule {
+  module: string;
+  label: string;
+  description: string;
+  icon: string;
+  color: string;
+  active: boolean;
+  weight: number;
+  inverted: boolean;
+}
+
 interface TraderProfile {
   display_name: string;
   ai_model: string;
   personality: string;
   personality_description: string | null;
+  toolkit?: ToolkitModule[];
   cash_balance: number;
   invested_value: number;
   total_value: number;
@@ -247,6 +270,60 @@ export default function TraderProfilePage() {
                 <h3 className="text-xs font-medium text-blue-500 uppercase tracking-wide mb-1">Risk Profile</h3>
                 <p className="text-sm text-gray-400 leading-relaxed">{PERSONALITY_DESCRIPTIONS[profile.personality].riskProfile}</p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Data Toolkit */}
+        {profile.toolkit && profile.toolkit.length > 0 && (
+          <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 mb-6">
+            <h2 className="text-lg font-semibold text-white mb-2">Data Toolkit</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Each AI trader uses a curated set of data modules, weighted by priority. Higher weight means the data appears first in the prompt and gets more attention.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {profile.toolkit.map((mod) => {
+                const colors = TOOLKIT_COLORS[mod.color] || TOOLKIT_COLORS.gray;
+                return (
+                  <div
+                    key={mod.module}
+                    className={`rounded-lg border p-3 transition-opacity ${
+                      mod.active
+                        ? `${colors.bg} ${colors.border}`
+                        : "bg-gray-900/20 border-gray-800/50 opacity-40"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-sm font-medium ${mod.active ? colors.text : "text-gray-600"}`}>
+                        {mod.label}
+                        {mod.inverted && (
+                          <span className="ml-1.5 text-xs bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">
+                            Inverted
+                          </span>
+                        )}
+                      </span>
+                      {mod.active ? (
+                        <span className="text-xs text-gray-500">
+                          Weight {mod.weight}/10
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-600">Off</span>
+                      )}
+                    </div>
+                    {mod.active && (
+                      <div className="w-full bg-gray-800 rounded-full h-1 mb-2">
+                        <div
+                          className={`h-1 rounded-full ${colors.text.replace("text-", "bg-")}`}
+                          style={{ width: `${mod.weight * 10}%` }}
+                        />
+                      </div>
+                    )}
+                    <p className={`text-xs leading-relaxed ${mod.active ? "text-gray-400" : "text-gray-600"}`}>
+                      {mod.description}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
