@@ -1,5 +1,9 @@
 import logging
 import os
+import sys
+
+# Force unbuffered stdout so print() from background threads shows in Railway logs
+sys.stdout.reconfigure(line_buffering=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

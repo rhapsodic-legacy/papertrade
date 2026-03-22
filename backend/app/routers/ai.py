@@ -286,17 +286,31 @@ async def get_ai_trader_profile(trader_id: str):
 
 def _run_trading_sync(session: str = "close"):
     """Wrapper to run the async trading function from a sync context."""
+    import logging
+    logger = logging.getLogger(__name__)
+    print(f"[TRADE SYNC] Starting trading sync wrapper (session={session})")
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(run_ai_trading(session=session))
+        print("[TRADE SYNC] Trading sync completed successfully")
+    except Exception as e:
+        logger.error("Trading sync failed: %s", e, exc_info=True)
+        print(f"[TRADE SYNC ERROR] {type(e).__name__}: {e}")
     finally:
         loop.close()
 
 
 def _run_commentary_sync():
     """Wrapper to run the async commentary function from a sync context."""
+    import logging
+    logger = logging.getLogger(__name__)
+    print("[COMMENTARY SYNC] Starting commentary sync wrapper")
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(generate_commentary())
+        print("[COMMENTARY SYNC] Commentary sync completed successfully")
+    except Exception as e:
+        logger.error("Commentary sync failed: %s", e, exc_info=True)
+        print(f"[COMMENTARY SYNC ERROR] {type(e).__name__}: {e}")
     finally:
         loop.close()
