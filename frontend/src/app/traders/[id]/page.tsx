@@ -35,6 +35,44 @@ const PERSONALITY_BG: Record<string, string> = {
   crypto_chad: "bg-orange-900/40",
 };
 
+const PERSONALITY_DESCRIPTIONS: Record<string, { summary: string; strategy: string; buySignals: string; sellSignals: string; riskProfile: string }> = {
+  vanilla: {
+    summary: "A balanced portfolio manager focused on risk-adjusted returns through diversification.",
+    strategy: "Combines fundamental analysis (P/E ratios, analyst consensus) with technical indicators (RSI, SMA trends) for entry and exit timing. Monitors sector exposure to avoid concentration risk and adjusts equity allocation based on market regime.",
+    buySignals: "Fairly valued stocks with solid fundamentals, confirmed by positive technical momentum.",
+    sellSignals: "Sector overweight above 40%, bearish market regime shift, or position drift from targets.",
+    riskProfile: "Maintains a 10 to 20% cash reserve for opportunistic buying. Rebalances when positions drift from target allocations.",
+  },
+  steady_eddie: {
+    summary: "A conservative value investor modeled after Warren Buffett's philosophy, prioritizing capital preservation and steady compounding.",
+    strategy: "Favors blue-chip stocks with below-average P/E ratios, strong analyst buy consensus, low beta (under 1.0), and dividend yields above 1%. Targets a portfolio of 60% blue chips, 20% defensive sectors (healthcare, consumer staples), 10% bonds (TLT), and 10% cash.",
+    buySignals: "Low P/E relative to sector, strong buy consensus, low volatility, RSI under 60.",
+    sellSignals: "RSI above 75 (overbought), position exceeds 15% of portfolio, or analyst consensus shifts to sell.",
+    riskProfile: "Avoids high-beta stocks (above 1.5), limits crypto to under 5% of portfolio, and avoids assets with annualized volatility above 50%. Shifts to 40% stocks, 30% bonds, and 30% cash in bearish markets.",
+  },
+  yolo_bot: {
+    summary: "An aggressive momentum trader inspired by high-frequency trend-following strategies. Rides winners hard and cuts losers fast.",
+    strategy: "Concentrates in the top 3 to 5 highest-momentum names. Overweights the leading sector based on rotation signals. In bullish markets, goes 90% invested in the strongest momentum assets. In bearish markets, pivots to crypto (which trades 24/7) and reduces stock exposure.",
+    buySignals: "7-day momentum above 3%, RSI between 50 and 75, price above SMA20, volume spike, bullish analyst consensus.",
+    sellSignals: "RSI above 80 (take profits), 7-day momentum turns negative, price drops below SMA20, or position falls more than 8%.",
+    riskProfile: "Keeps less than 5% cash. High concentration, high turnover. Accepts large drawdowns in exchange for outsized upside potential.",
+  },
+  contrarian_carl: {
+    summary: "A contrarian value investor inspired by Michael Burry and mean-reversion strategies. Buys when others are fearful and sells when others are greedy.",
+    strategy: "Looks for quality stocks that have been oversold in panic selling. Waits for prices to revert to historical norms before taking profits. In bearish markets with high safe-haven demand, aggressively buys quality names that got dragged down. In bullish markets with elevated RSI, takes profits and builds cash.",
+    buySignals: "RSI below 30 (oversold), 7-day return worse than negative 5%, P/E below historical norms, mixed analyst consensus.",
+    sellSignals: "RSI above 70 (overextended recovery), 30-day return above 15%, or position profit exceeds 20%.",
+    riskProfile: "Holds 15 to 25% cash as dry powder for buying opportunities. Diversifies across 6 to 10 positions. Never chases momentum.",
+  },
+  crypto_chad: {
+    summary: "A crypto-native trader inspired by on-chain analysts and narrative cycle trading, with a strong conviction in digital assets.",
+    strategy: "Maintains 60 to 80% crypto allocation, 10 to 20% tech stocks (correlated growth plays), and 10 to 20% cash. Uses Bitcoin as a leading indicator for the entire crypto market. When BTC is bullish, altcoins typically rally harder. When BTC turns bearish, reduces all crypto exposure.",
+    buySignals: "Coins with market cap rank under 20, distance from all-time high above 30%, positive 7-day momentum, and Bitcoin RSI above 40.",
+    sellSignals: "Distance from all-time high under 5% (near top), RSI above 80, or Bitcoin breaks below its 50-day moving average.",
+    riskProfile: "Layers positions into core holdings (BTC/ETH at 40%), mid-cap altcoins (30%), and small-cap momentum plays (30%). Watches interest rate signals as a macro overlay.",
+  },
+};
+
 interface TraderProfile {
   display_name: string;
   ai_model: string;
@@ -115,8 +153,8 @@ export default function TraderProfilePage() {
         <Navbar />
         <main className="max-w-5xl mx-auto px-4 py-8">
           <p className="text-red-400">{error || "Trader not found"}</p>
-          <Link href="/leaderboard" className="text-blue-400 hover:text-blue-300 text-sm mt-2 inline-block">
-            Back to Leaderboard
+          <Link href="/learn" className="text-blue-400 hover:text-blue-300 text-sm mt-2 inline-block">
+            Back to Learn from AI
           </Link>
         </main>
       </div>
@@ -133,10 +171,10 @@ export default function TraderProfilePage() {
       <main className="max-w-5xl mx-auto px-4 py-8">
         {/* Back Link */}
         <Link
-          href="/leaderboard"
+          href="/learn"
           className="text-sm text-gray-400 hover:text-white transition mb-6 inline-block"
         >
-          &larr; Back to Leaderboard
+          &larr; Back to Learn from AI
         </Link>
 
         {/* Header */}
@@ -146,9 +184,9 @@ export default function TraderProfilePage() {
               <h1 className={`text-2xl font-bold ${PERSONALITY_COLORS[profile.personality] || "text-white"}`}>
                 {profile.display_name}
               </h1>
-              {profile.personality_description && (
+              {profile.personality && PERSONALITY_DESCRIPTIONS[profile.personality] && (
                 <p className="text-gray-400 text-sm mt-2 max-w-xl">
-                  {profile.personality_description}
+                  {PERSONALITY_DESCRIPTIONS[profile.personality].summary}
                 </p>
               )}
             </div>
@@ -185,6 +223,33 @@ export default function TraderProfilePage() {
             <p className="text-lg font-bold text-white">{profile.trades.length}</p>
           </div>
         </div>
+
+        {/* Strategy Overview */}
+        {profile.personality && PERSONALITY_DESCRIPTIONS[profile.personality] && (
+          <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 mb-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Trading Strategy</h2>
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Approach</h3>
+                <p className="text-sm text-gray-300 leading-relaxed">{PERSONALITY_DESCRIPTIONS[profile.personality].strategy}</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <h3 className="text-xs font-medium text-green-500 uppercase tracking-wide mb-1">Buy Signals</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">{PERSONALITY_DESCRIPTIONS[profile.personality].buySignals}</p>
+                </div>
+                <div>
+                  <h3 className="text-xs font-medium text-red-500 uppercase tracking-wide mb-1">Sell Signals</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">{PERSONALITY_DESCRIPTIONS[profile.personality].sellSignals}</p>
+                </div>
+              </div>
+              <div>
+                <h3 className="text-xs font-medium text-blue-500 uppercase tracking-wide mb-1">Risk Profile</h3>
+                <p className="text-sm text-gray-400 leading-relaxed">{PERSONALITY_DESCRIPTIONS[profile.personality].riskProfile}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Performance Chart */}
         {profile.snapshots.length > 1 && (

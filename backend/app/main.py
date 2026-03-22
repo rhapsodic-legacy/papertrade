@@ -1,7 +1,14 @@
+import logging
 import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Configure root logger so all logger.error/warning/info calls show in Railway logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s: %(message)s",
+)
 
 from app.routers import ai, analytics, auth, market, notifications, portfolio, trading, watchlist
 

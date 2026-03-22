@@ -181,56 +181,129 @@ function PipelineContent() {
   const steps = [
     {
       step: "1",
-      title: "Compile Brief",
+      title: "Compile Market Brief",
       time: "5:00 PM ET",
-      desc: "Gather prices, fundamentals, technicals, news, and earnings into one market brief.",
+      cost: "API calls only",
+      desc: "Fetch live prices, fundamentals, technicals, news, and earnings into one unified market brief for all traders.",
+      details: [
+        "60+ stock quotes from Finnhub, 20+ crypto prices from CoinGecko",
+        "Compute RSI, SMA, EMA, MACD, Bollinger Bands, ATR from 60 days of candle data",
+        "Composite signal score per asset combining all indicators into a single rating",
+        "Analyst consensus, earnings calendar, market news headlines",
+      ],
     },
     {
       step: "2",
       title: "Pattern Recognition",
       time: "5:10 PM ET",
-      desc: "Code analyzes each held asset for candlestick patterns (doji, hammer, engulfing, morning/evening star), golden/death cross signals, support/resistance levels, and volume anomalies. Zero LLM cost.",
+      cost: "Zero LLM cost",
+      desc: "Code scans each held asset for chart patterns, crossover signals, support/resistance levels, and volume anomalies.",
+      details: [
+        "Candlestick patterns: doji (indecision), hammer (bullish reversal), shooting star (bearish reversal), bullish/bearish engulfing, morning/evening star",
+        "Trend crossovers: golden cross (SMA20 above SMA50, bullish) and death cross (bearish), plus EMA 12/26 crossovers for faster signals",
+        "Support and resistance levels detected from price pivot clustering within 1.5% tolerance",
+        "Volume anomaly detection using z-score analysis: breakouts (volume spike + price move), churn (volume spike + flat price), and low conviction signals",
+        "Aggregate pattern signal: combines all detected patterns into a single BULLISH / BEARISH / NEUTRAL rating per asset",
+      ],
     },
     {
       step: "3",
       title: "Portfolio Optimizer",
       time: "5:12 PM ET",
-      desc: "Code checks correlation between held assets, enforces personality risk budgets (cash targets, crypto limits, sector concentration), and generates buy/sell/trim suggestions based on signal scores. Zero LLM cost.",
+      cost: "Zero LLM cost",
+      desc: "Code computes portfolio risk metrics and generates trade suggestions based on each personality's risk budget.",
+      details: [
+        "Correlation matrix: Pearson correlation on daily returns between all held assets. Flags pairs above 0.75 as diversification risks",
+        "Position concentration check: flags any single position exceeding the personality's max allocation",
+        "Crypto allocation enforcement: each personality has a crypto ceiling (e.g., Steady Eddie 5%, Crypto Chad 80%)",
+        "Sector concentration check: flags any sector above 40% of portfolio",
+        "Signal-based buy candidates: ranks assets not currently held by composite signal score",
+        "Sell signals: flags held positions with strong negative signal scores",
+        "All suggestions are advisory. The AI can accept, modify, or reject every one",
+      ],
     },
     {
       step: "4",
       title: "AI Trading Decision",
       time: "5:15 PM ET",
-      desc: "Each AI receives the brief, pattern analysis, optimizer suggestions, its portfolio, its memory, and its personality prompt. It accepts, modifies, or rejects the suggestions and returns up to 8 trades with reasoning.",
+      cost: "1 LLM call per trader",
+      desc: "Each AI receives everything from steps 1 through 3, plus its portfolio, trade memory, and personality prompt. It decides what to trade.",
+      details: [
+        "The AI sees: market brief, pattern analysis, optimizer suggestions, current positions with P&L, last 15 trades, and its personality strategy",
+        "It returns up to 8 trades as structured JSON with a reasoning field for each",
+        "Different personalities interpret the same data differently: Steady Eddie avoids earnings risk, YOLO Bot chases momentum, Contrarian Carl buys what others are selling",
+        "The model can override any optimizer suggestion if it has a good reason",
+      ],
     },
     {
       step: "5",
-      title: "Snapshots",
+      title: "Snapshots & Leaderboard",
       time: "5:30 PM ET",
-      desc: "Portfolio values are recorded for leaderboard scoring and performance charts.",
+      cost: "Database writes",
+      desc: "Portfolio values are recorded for performance tracking, leaderboard scoring, and historical charts.",
+      details: null,
     },
     {
       step: "6",
-      title: "Commentary",
+      title: "AI Commentary",
       time: "5:45 PM ET",
-      desc: "Each AI writes a market outlook explaining its trades and reasoning.",
+      cost: "1 LLM call per trader",
+      desc: "Each AI writes a first-person blog post explaining what it did, why, and what it is watching for tomorrow.",
+      details: null,
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
-      {steps.map((s) => (
-        <div key={s.step} className="bg-gray-800/50 rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-7 h-7 flex items-center justify-center rounded-full bg-blue-600 text-white text-sm font-bold">
-              {s.step}
-            </span>
-            <span className="text-xs text-gray-500">{s.time}</span>
+    <div className="pt-4">
+      <p className="text-sm text-gray-400 mb-4">
+        Three times daily, a 6 step pipeline runs for each of the 20 AI traders.
+        Steps 2 and 3 are pure code with zero LLM cost, making the AI smarter
+        without spending extra tokens.
+      </p>
+
+      <div className="space-y-3">
+        {steps.map((s) => (
+          <div key={s.step} className="bg-gray-800/50 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-7 h-7 flex items-center justify-center rounded-full bg-blue-600 text-white text-sm font-bold shrink-0">
+                {s.step}
+              </span>
+              <h3 className="text-white font-semibold">{s.title}</h3>
+              <span className="text-xs text-gray-500 ml-auto whitespace-nowrap">{s.time}</span>
+              <span className={`text-xs px-2 py-0.5 rounded whitespace-nowrap ${
+                s.cost === "Zero LLM cost"
+                  ? "bg-green-900/40 text-green-400"
+                  : s.cost.includes("LLM")
+                    ? "bg-amber-900/40 text-amber-400"
+                    : "bg-gray-700/40 text-gray-400"
+              }`}>
+                {s.cost}
+              </span>
+            </div>
+            <p className="text-sm text-gray-400 mb-2">{s.desc}</p>
+            {s.details && (
+              <ul className="space-y-1.5 ml-1">
+                {s.details.map((d, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-gray-500">
+                    <span className="text-blue-500 mt-0.5 shrink-0">&#8226;</span>
+                    <span>{d}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          <h3 className="text-white font-semibold mb-1">{s.title}</h3>
-          <p className="text-sm text-gray-400">{s.desc}</p>
-        </div>
-      ))}
+        ))}
+      </div>
+
+      <div className="mt-4 p-4 bg-blue-900/20 border border-blue-800/50 rounded-lg">
+        <h4 className="text-sm font-semibold text-blue-400 mb-1">Why this design?</h4>
+        <p className="text-sm text-gray-400">
+          Steps 2 and 3 do heavy analysis in code before the LLM ever sees the data.
+          This means the AI gets pre-computed pattern signals, correlation warnings,
+          and allocation suggestions for free. The result: smarter decisions at the
+          same token cost as a naive &quot;here is the data, what do you do?&quot; approach.
+        </p>
+      </div>
     </div>
   );
 }

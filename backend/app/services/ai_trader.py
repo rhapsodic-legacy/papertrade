@@ -996,9 +996,12 @@ then follow your strategy's BUY/SELL criteria."""
         parsed = json.loads(text)
         trades = parsed.get("trades", [])
         if not isinstance(trades, list):
+            logger.warning("AI response 'trades' field is not a list: %s", type(trades))
             return []
         return trades[:8]  # Max 8 trades (allows rebalancing)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.error("JSON parse failed for AI response: %s — raw (first 500 chars): %s", e, raw[:500])
+        print(f"[PIPELINE ERROR] JSON parse failed: {e} — raw: {raw[:300]}")
         return []
 
 
@@ -1202,6 +1205,7 @@ async def _run_trader(
                     entry["reasoning"] = trade["reasoning"]
                 executed.append(entry)
 
+        print(f"[PIPELINE OK] {display_name}: {len(trades)} proposed, {len(executed)} executed")
         return {
             "trader": display_name,
             "status": "ok",
@@ -1212,6 +1216,7 @@ async def _run_trader(
 
     except Exception as e:
         logger.error("Trader %s failed: %s", display_name, e)
+        print(f"[PIPELINE ERROR] Trader {display_name} failed: {e}")
         return {
             "trader": display_name,
             "status": "error",
@@ -1243,8 +1248,10 @@ async def run_ai_trading(session: str = "close") -> dict:
 
     Estimated time: ~4 min (dominated by 5 Gemini Pro calls × 35s).
     """
+    print(f"[PIPELINE START] AI trading session={session}")
     brief = await get_latest_brief()
     if not brief:
+        print("[PIPELINE ERROR] No market brief available")
         return {"error": "No market brief available. Run /api/market/brief/trigger first."}
 
     db = get_supabase_admin()
