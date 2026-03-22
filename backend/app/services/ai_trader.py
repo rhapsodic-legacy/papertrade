@@ -1128,6 +1128,7 @@ async def _run_trader(
     user_id = profile["id"]
     display_name = profile["display_name"]
     model_key = profile.get("ai_model", "")
+    print(f"[PIPELINE] Starting trader: {display_name} (model={model_key})")
 
     # Determine personality from display name
     personality_key = None
@@ -1137,6 +1138,7 @@ async def _run_trader(
             break
 
     if not personality_key or model_key not in MODELS:
+        print(f"[PIPELINE SKIP] {display_name}: unknown personality or model ({model_key})")
         return {
             "trader": display_name,
             "status": "skipped",
@@ -1229,6 +1231,8 @@ async def _run_provider_batch(
 ) -> list[dict]:
     """Run a batch of traders that share the same API provider, sequentially
     with the appropriate delay between calls."""
+    model_key = profiles[0].get("ai_model", "unknown") if profiles else "empty"
+    print(f"[PIPELINE BATCH] Starting {len(profiles)} traders for provider={model_key}, delay={delay}s")
     results = []
     for i, profile in enumerate(profiles):
         result = await _run_trader(db, brief, profile, session=session)
@@ -1304,14 +1308,19 @@ async def run_ai_trading(session: str = "close") -> dict:
         return results
 
     # Gather: Gemini batch + all non-Gemini batches run concurrently
+    # return_exceptions=True prevents one batch failure from cancelling others
     gathered = await asyncio.gather(
         _run_all_gemini(),
         *non_gemini_batches,
+        return_exceptions=True,
     )
 
+    print(f"[PIPELINE] All batches complete. Flattening results.")
     # Flatten results
     for batch_result in gathered:
-        if isinstance(batch_result, list):
+        if isinstance(batch_result, BaseException):
+            print(f"[PIPELINE ERROR] Batch failed with: {batch_result}")
+        elif isinstance(batch_result, list):
             all_results.extend(batch_result)
 
     # Auto-snapshot all portfolios after trading completes
