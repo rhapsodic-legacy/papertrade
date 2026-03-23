@@ -350,6 +350,71 @@ async def pipeline_diagnostics():
     }
 
 
+@router.get("/diagnostics/ping")
+async def ping_providers():
+    """Send a tiny request to each LLM provider and report status."""
+    import httpx
+    from app.config import get_settings
+
+    settings = get_settings()
+    results = {}
+
+    # Cerebras
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.cerebras.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.cerebras_api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "gpt-oss-120b",
+                    "messages": [{"role": "user", "content": "Say OK"}],
+                    "max_tokens": 5,
+                },
+            )
+            if resp.status_code == 200:
+                results["cerebras"] = {"status": "ok", "response": resp.json()["choices"][0]["message"]["content"][:50]}
+            else:
+                results["cerebras"] = {"status": "error", "code": resp.status_code, "body": resp.text[:300]}
+    except Exception as e:
+        results["cerebras"] = {"status": "exception", "error": str(e)[:200]}
+
+    # Mistral
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.mistral_api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "mistral-large-latest",
+                    "messages": [{"role": "user", "content": "Say OK"}],
+                    "max_tokens": 5,
+                },
+            )
+            if resp.status_code == 200:
+                results["mistral"] = {"status": "ok", "response": resp.json()["choices"][0]["message"]["content"][:50]}
+            else:
+                results["mistral"] = {"status": "error", "code": resp.status_code, "body": resp.text[:300]}
+    except Exception as e:
+        results["mistral"] = {"status": "exception", "error": str(e)[:200]}
+
+    # Gemini Flash (quick check)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={settings.gemini_api_key}",
+                json={"contents": [{"parts": [{"text": "Say OK"}]}], "generationConfig": {"maxOutputTokens": 5}},
+            )
+            if resp.status_code == 200:
+                results["gemini"] = {"status": "ok"}
+            else:
+                body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text[:300]
+                results["gemini"] = {"status": "error", "code": resp.status_code, "body": body}
+    except Exception as e:
+        results["gemini"] = {"status": "exception", "error": str(e)[:200]}
+
+    return results
+
+
 def _run_trading_sync(session: str = "close"):
     """Wrapper to run the async trading function from a sync context."""
     import logging
