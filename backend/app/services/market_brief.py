@@ -9,6 +9,7 @@ from app.services.market_data import (
     CRYPTO_MAP,
     STOCK_SECTORS,
     get_quote,
+    get_all_crypto_quotes,
     get_stock_candles,
     get_crypto_history,
     FINNHUB_BASE,
@@ -728,18 +729,17 @@ async def compile_market_brief() -> dict:
                 "change_pct": quote.get("change_pct"),
             })
 
-    # 2. Fetch all crypto quotes
+    # 2. Fetch all crypto quotes (single API call instead of 20 individual ones)
+    all_crypto = await get_all_crypto_quotes()
     crypto_quotes = []
-    for symbol, info in CRYPTO_MAP.items():
-        quote = await get_quote(symbol, "crypto")
-        if quote:
-            crypto_quotes.append({
-                "symbol": symbol,
-                "name": info["name"],
-                "price": quote["price"],
-                "change": quote.get("change"),
-                "change_pct": quote.get("change_pct"),
-            })
+    for symbol, quote in all_crypto.items():
+        crypto_quotes.append({
+            "symbol": symbol,
+            "name": CRYPTO_MAP[symbol]["name"],
+            "price": quote["price"],
+            "change": quote.get("change"),
+            "change_pct": quote.get("change_pct"),
+        })
 
     # 3. Fetch market news from Finnhub
     news = await _fetch_finnhub_news(settings.finnhub_api_key)

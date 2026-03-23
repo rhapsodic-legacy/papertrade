@@ -213,6 +213,70 @@ async def get_stock_quote(symbol: str) -> dict | None:
         return result
 
 
+async def get_all_crypto_quotes() -> dict[str, dict]:
+    """Fetch all crypto quotes in a single CoinGecko call. Returns {symbol: quote_dict}.
+
+    This avoids 20 individual API calls that trigger rate limits.
+    """
+    # Return all cached if fresh
+    all_cached = {}
+    any_missing = False
+    for symbol in CRYPTO_MAP:
+        cached = _get_cached(symbol)
+        if cached:
+            all_cached[symbol] = cached
+        else:
+            any_missing = True
+
+    if not any_missing:
+        return all_cached
+
+    # Batch fetch all in one call
+    all_ids = ",".join(info["coingecko_id"] for info in CRYPTO_MAP.values())
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{COINGECKO_BASE}/simple/price",
+                params={
+                    "ids": all_ids,
+                    "vs_currencies": "usd",
+                    "include_24hr_change": "true",
+                    "precision": "full",
+                },
+            )
+            if resp.status_code == 429:
+                # Rate limited — return whatever is cached
+                return all_cached
+            if resp.status_code != 200:
+                return all_cached
+            data = resp.json()
+    except Exception:
+        return all_cached
+
+    results = {}
+    for symbol, info in CRYPTO_MAP.items():
+        coin_data = data.get(info["coingecko_id"], {})
+        price = coin_data.get("usd")
+        if price is None:
+            # Keep stale cache if available
+            if symbol in all_cached:
+                results[symbol] = all_cached[symbol]
+            continue
+        change_pct = coin_data.get("usd_24h_change")
+        result = {
+            "symbol": symbol,
+            "asset_type": "crypto",
+            "price": price,
+            "change": round(price * (change_pct / 100), 6) if change_pct else None,
+            "change_pct": round(change_pct, 2) if change_pct else None,
+            "name": info["name"],
+        }
+        _set_cached(symbol, result)
+        results[symbol] = result
+
+    return results
+
+
 async def get_crypto_quote(symbol: str) -> dict | None:
     cached = _get_cached(symbol)
     if cached:

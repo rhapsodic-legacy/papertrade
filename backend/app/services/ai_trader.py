@@ -861,6 +861,24 @@ async def _run_trader(
             "reason": "unknown personality or model",
         }
 
+    # Guard: skip if this trader already traded today
+    today_str = date.today().isoformat()
+    existing = (
+        db.table("transactions")
+        .select("id")
+        .eq("user_id", user_id)
+        .gte("created_at", f"{today_str}T00:00:00")
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        print(f"[PIPELINE SKIP] {display_name}: already traded today")
+        return {
+            "trader": display_name,
+            "status": "skipped",
+            "reason": "already traded today",
+        }
+
     try:
         # Get portfolio state
         portfolio = await _get_ai_portfolio(db, user_id)
