@@ -541,6 +541,409 @@ def _format_cross_trader_positions(
     return "## What Other AI Traders Hold\n" + "\n".join(lines)
 
 
+def build_performance_intelligence(db) -> dict[str, str]:
+    """Compute personalized performance intelligence for every AI trader.
+
+    Called once per pipeline run. Returns {user_id: formatted_text}.
+    Each trader gets:
+    1. Self-assessment: win rate trend, strengths/weaknesses by asset type
+    2. Peer comparison: how their same-personality peer (different model) is doing
+    3. Specific actionable insights from peer decisions that diverged
+    """
+    import json
+
+    # Get all AI profiles with personality mapping
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+    if not profiles_resp.data:
+        return {}
+
+    profile_map = {}
+    personality_groups: dict[str, list[dict]] = {}
+    for p in profiles_resp.data:
+        pkey = None
+        for k, v in PERSONALITIES.items():
+            if v["name"] in p["display_name"]:
+                pkey = k
+                break
+        profile_map[p["id"]] = {
+            "display_name": p["display_name"],
+            "ai_model": p["ai_model"],
+            "personality": pkey,
+        }
+        if pkey:
+            personality_groups.setdefault(pkey, []).append(p)
+
+    trader_ids = [p["id"] for p in profiles_resp.data]
+
+    # Batch fetch recent transactions (last 30 days)
+    today = date.today()
+    from datetime import timedelta
+    cutoff = (today - timedelta(days=30)).isoformat()
+
+    tx_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning, modules_used")
+        .in_("user_id", trader_ids)
+        .gte("created_at", f"{cutoff}T00:00:00")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    # Group transactions by user
+    tx_by_user: dict[str, list] = {}
+    for tx in tx_resp.data or []:
+        tx_by_user.setdefault(tx["user_id"], []).append(tx)
+
+    # Fetch recent reflections
+    ref_resp = (
+        db.table("trade_reflections")
+        .select("user_id, symbol, side, outcome_score, lessons, reflected_at")
+        .in_("user_id", trader_ids)
+        .order("reflected_at", desc=True)
+        .limit(200)
+        .execute()
+    )
+    ref_by_user: dict[str, list] = {}
+    for r in ref_resp.data or []:
+        ref_by_user.setdefault(r["user_id"], []).append(r)
+
+    # Compute per-trader metrics
+    trader_metrics: dict[str, dict] = {}
+    for uid in trader_ids:
+        txs = tx_by_user.get(uid, [])
+        refs = ref_by_user.get(uid, [])
+        trader_metrics[uid] = _compute_trader_intel(txs, refs)
+
+    # Build formatted text per trader
+    result: dict[str, str] = {}
+    for uid in trader_ids:
+        info = profile_map.get(uid, {})
+        pkey = info.get("personality")
+        if not pkey:
+            continue
+
+        sections = []
+
+        # --- Self Assessment ---
+        metrics = trader_metrics[uid]
+        self_lines = _format_self_assessment(metrics)
+        if self_lines:
+            sections.append("### YOUR PERFORMANCE INTELLIGENCE\n" + self_lines)
+
+        # --- Peer Comparison ---
+        peers = personality_groups.get(pkey, [])
+        peer_profiles = [p for p in peers if p["id"] != uid]
+        if peer_profiles:
+            peer_lines = _format_peer_comparison(
+                uid, info, metrics, peer_profiles, trader_metrics, tx_by_user,
+            )
+            if peer_lines:
+                sections.append(peer_lines)
+
+        if sections:
+            result[uid] = "\n\n".join(sections)
+
+    return result
+
+
+def _compute_trader_intel(txs: list[dict], reflections: list[dict]) -> dict:
+    """Compute intelligence metrics from a trader's recent transactions and reflections."""
+    import json
+
+    if not txs:
+        return {"total_trades": 0}
+
+    buys = [t for t in txs if t["side"] == "buy"]
+    sells = [t for t in txs if t["side"] == "sell"]
+
+    # Replay for P&L per sell
+    positions: dict[str, dict] = {}
+    sell_pnl: list[dict] = []  # {symbol, asset_type, pnl, modules, date}
+    buy_entries: dict[str, dict] = {}  # symbol -> last buy info
+
+    for tx in txs:
+        sym = tx["symbol"]
+        qty = float(tx["quantity"])
+        price = float(tx["price"])
+
+        if tx["side"] == "buy":
+            if sym not in positions:
+                positions[sym] = {"qty": 0.0, "cost_basis": 0.0}
+            pos = positions[sym]
+            total_cost = pos["qty"] * pos["cost_basis"] + qty * price
+            pos["qty"] += qty
+            pos["cost_basis"] = total_cost / pos["qty"] if pos["qty"] > 0 else 0
+            buy_entries[sym] = {
+                "reasoning": tx.get("reasoning", ""),
+                "modules": [],
+                "date": tx["created_at"][:10],
+            }
+            if tx.get("modules_used"):
+                try:
+                    buy_entries[sym]["modules"] = json.loads(tx["modules_used"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        else:
+            pos = positions.get(sym)
+            if pos and pos["qty"] > 0:
+                pnl = (price - pos["cost_basis"]) * qty
+                modules = []
+                if tx.get("modules_used"):
+                    try:
+                        modules = json.loads(tx["modules_used"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                sell_pnl.append({
+                    "symbol": sym,
+                    "asset_type": tx.get("asset_type", "stock"),
+                    "pnl": pnl,
+                    "pnl_pct": ((price / pos["cost_basis"]) - 1) * 100 if pos["cost_basis"] > 0 else 0,
+                    "modules": modules,
+                    "date": tx["created_at"][:10],
+                    "reasoning": tx.get("reasoning", ""),
+                })
+                pos["qty"] -= qty
+                if pos["qty"] <= 0.001:
+                    pos["qty"] = 0
+
+    # Win rate by asset type
+    by_asset: dict[str, dict] = {}
+    for s in sell_pnl:
+        atype = s["asset_type"]
+        if atype not in by_asset:
+            by_asset[atype] = {"wins": 0, "losses": 0, "total_pnl": 0.0}
+        if s["pnl"] > 0:
+            by_asset[atype]["wins"] += 1
+        else:
+            by_asset[atype]["losses"] += 1
+        by_asset[atype]["total_pnl"] += s["pnl"]
+
+    # Recent reflection trend
+    avg_outcome = 0.0
+    outcome_trend = "unknown"
+    if reflections:
+        scores = [float(r["outcome_score"]) for r in reflections[:20]]
+        avg_outcome = sum(scores) / len(scores)
+        if len(scores) >= 6:
+            first_half = sum(scores[len(scores)//2:]) / (len(scores) - len(scores)//2)
+            second_half = sum(scores[:len(scores)//2]) / (len(scores)//2)
+            if second_half > first_half + 0.1:
+                outcome_trend = "improving"
+            elif second_half < first_half - 0.1:
+                outcome_trend = "declining"
+            else:
+                outcome_trend = "stable"
+
+    # Best and worst trades
+    best_trade = max(sell_pnl, key=lambda x: x["pnl"]) if sell_pnl else None
+    worst_trade = min(sell_pnl, key=lambda x: x["pnl"]) if sell_pnl else None
+
+    # Recent notable buys (last 5)
+    recent_buys = [
+        {"symbol": b["symbol"], "reasoning": b.get("reasoning", "")[:200], "date": b["created_at"][:10]}
+        for b in buys[-5:]
+    ]
+
+    total_sells = len(sell_pnl)
+    wins = sum(1 for s in sell_pnl if s["pnl"] > 0)
+
+    return {
+        "total_trades": len(txs),
+        "total_sells": total_sells,
+        "win_rate": round(wins / total_sells * 100, 1) if total_sells > 0 else 0,
+        "total_pnl": round(sum(s["pnl"] for s in sell_pnl), 2),
+        "by_asset": by_asset,
+        "avg_outcome_score": round(avg_outcome, 2),
+        "outcome_trend": outcome_trend,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "recent_buys": recent_buys,
+        "sell_details": sell_pnl,
+        "recent_lessons": [r.get("lessons", "") for r in (reflections or [])[:3] if r.get("lessons")],
+    }
+
+
+def _format_self_assessment(metrics: dict) -> str:
+    """Format self-assessment section from computed metrics."""
+    if metrics.get("total_trades", 0) == 0:
+        return ""
+
+    lines = []
+
+    # Overall performance
+    wr = metrics.get("win_rate", 0)
+    total_pnl = metrics.get("total_pnl", 0)
+    sells = metrics.get("total_sells", 0)
+    if sells > 0:
+        pnl_label = f"+${total_pnl:,.0f}" if total_pnl >= 0 else f"-${abs(total_pnl):,.0f}"
+        lines.append(f"30-day record: {sells} closed trades, {wr:.0f}% win rate, {pnl_label} realized P&L")
+
+    # Asset type breakdown
+    by_asset = metrics.get("by_asset", {})
+    for atype, stats in by_asset.items():
+        total = stats["wins"] + stats["losses"]
+        if total >= 2:
+            awr = round(stats["wins"] / total * 100)
+            pnl = stats["total_pnl"]
+            if awr < 40:
+                lines.append(f"WEAKNESS: {atype} trades have {awr}% win rate ({stats['wins']}W/{stats['losses']}L, ${pnl:+,.0f})")
+            elif awr >= 65:
+                lines.append(f"STRENGTH: {atype} trades have {awr}% win rate ({stats['wins']}W/{stats['losses']}L, ${pnl:+,.0f})")
+
+    # Reflection trend
+    trend = metrics.get("outcome_trend", "unknown")
+    avg_score = metrics.get("avg_outcome_score", 0)
+    if trend == "declining":
+        lines.append(f"WARNING: Your trade quality is declining (avg outcome score {avg_score:+.2f}). Review your recent approach.")
+    elif trend == "improving":
+        lines.append(f"POSITIVE: Your trade quality is improving (avg outcome score {avg_score:+.2f}). Keep refining.")
+    elif trend == "stable" and avg_score < -0.2:
+        lines.append(f"CONCERN: Trade outcomes are consistently poor (avg score {avg_score:+.2f}). Consider adjusting strategy.")
+
+    # Recent lessons from reflections
+    lessons = metrics.get("recent_lessons", [])
+    if lessons:
+        lines.append("Your recent lessons (apply these today):")
+        for lesson in lessons[:3]:
+            lines.append(f"  - {lesson}")
+
+    return "\n".join(lines) if lines else ""
+
+
+def _format_peer_comparison(
+    current_uid: str,
+    current_info: dict,
+    current_metrics: dict,
+    peer_profiles: list[dict],
+    all_metrics: dict[str, dict],
+    tx_by_user: dict[str, list],
+) -> str:
+    """Format peer comparison: same personality, different model."""
+    lines = []
+    current_model = current_info.get("ai_model", "unknown")
+
+    for peer in peer_profiles:
+        peer_uid = peer["id"]
+        peer_model = peer.get("ai_model", "unknown")
+        peer_metrics = all_metrics.get(peer_uid, {})
+
+        if peer_metrics.get("total_trades", 0) < 3:
+            continue
+
+        peer_wr = peer_metrics.get("win_rate", 0)
+        current_wr = current_metrics.get("win_rate", 0)
+        peer_pnl = peer_metrics.get("total_pnl", 0)
+        current_pnl = current_metrics.get("total_pnl", 0)
+
+        # Determine who's outperforming
+        peer_label = peer_model.replace("llama", "Groq").replace("gemini-flash", "Gemini Flash").replace("gemini-pro", "Gemini Pro").replace("mistral", "Mistral")
+        you_label = current_model.replace("llama", "Groq").replace("gemini-flash", "Gemini Flash").replace("gemini-pro", "Gemini Pro").replace("mistral", "Mistral")
+
+        header = f"### PEER INSIGHT (your {peer_label} counterpart runs the same strategy)"
+
+        comparison = []
+
+        # Win rate comparison
+        wr_diff = current_wr - peer_wr
+        if abs(wr_diff) >= 10 and current_metrics.get("total_sells", 0) >= 3 and peer_metrics.get("total_sells", 0) >= 3:
+            if wr_diff > 0:
+                comparison.append(
+                    f"You're outperforming your peer: {current_wr:.0f}% vs {peer_wr:.0f}% win rate. "
+                    f"Your approach is working better right now."
+                )
+            else:
+                comparison.append(
+                    f"Your peer has a higher win rate: {peer_wr:.0f}% vs your {current_wr:.0f}%. "
+                    f"Consider what they're doing differently."
+                )
+
+        # P&L comparison
+        pnl_diff = current_pnl - peer_pnl
+        if abs(pnl_diff) >= 500:
+            if pnl_diff > 0:
+                comparison.append(f"Your P&L (${current_pnl:+,.0f}) is ahead of peer (${peer_pnl:+,.0f}).")
+            else:
+                comparison.append(f"Your peer's P&L (${peer_pnl:+,.0f}) is ahead of yours (${current_pnl:+,.0f}).")
+
+        # Asset type divergence
+        peer_by_asset = peer_metrics.get("by_asset", {})
+        current_by_asset = current_metrics.get("by_asset", {})
+        for atype in set(list(peer_by_asset.keys()) + list(current_by_asset.keys())):
+            p_stats = peer_by_asset.get(atype, {"wins": 0, "losses": 0, "total_pnl": 0})
+            c_stats = current_by_asset.get(atype, {"wins": 0, "losses": 0, "total_pnl": 0})
+            p_total = p_stats["wins"] + p_stats["losses"]
+            c_total = c_stats["wins"] + c_stats["losses"]
+            if p_total >= 2 and c_total >= 2:
+                p_wr = p_stats["wins"] / p_total * 100
+                c_wr = c_stats["wins"] / c_total * 100
+                if p_wr - c_wr >= 20:
+                    comparison.append(
+                        f"Peer excels at {atype}: {p_wr:.0f}% win rate (${p_stats['total_pnl']:+,.0f}) "
+                        f"vs your {c_wr:.0f}% (${c_stats['total_pnl']:+,.0f}). Study their {atype} approach."
+                    )
+                elif c_wr - p_wr >= 20:
+                    comparison.append(
+                        f"You excel at {atype}: {c_wr:.0f}% win rate vs peer's {p_wr:.0f}%. "
+                        f"Your {atype} strategy is stronger."
+                    )
+
+        # Specific recent trades that diverged (one bought, other sold same symbol)
+        peer_txs = tx_by_user.get(peer_uid, [])
+        current_txs = tx_by_user.get(current_uid, [])
+
+        # Look at last 7 days of trades for divergence
+        recent_cutoff = (date.today() - timedelta(days=7)).isoformat()
+        peer_recent = {
+            (t["symbol"], t["side"]): t.get("reasoning", "")[:150]
+            for t in peer_txs if t["created_at"][:10] >= recent_cutoff
+        }
+        current_recent = {
+            (t["symbol"], t["side"]): t.get("reasoning", "")[:150]
+            for t in current_txs if t["created_at"][:10] >= recent_cutoff
+        }
+
+        divergences = []
+        for (sym, side), reasoning in peer_recent.items():
+            opposite = "sell" if side == "buy" else "buy"
+            if (sym, opposite) in current_recent:
+                divergences.append({
+                    "symbol": sym,
+                    "peer_action": side,
+                    "your_action": opposite,
+                    "peer_reasoning": reasoning,
+                })
+
+        if divergences:
+            comparison.append("Recent strategy divergences with your peer:")
+            for d in divergences[:2]:
+                comparison.append(
+                    f"  {d['symbol']}: You {d['your_action'].upper()}d, peer {d['peer_action'].upper()}d. "
+                    f"Peer reasoning: \"{d['peer_reasoning']}\""
+                )
+
+        # Peer's best trade (to learn from)
+        peer_best = peer_metrics.get("best_trade")
+        if peer_best and peer_best["pnl"] > 500:
+            comparison.append(
+                f"Peer's best recent trade: {peer_best['symbol']} for ${peer_best['pnl']:+,.0f} "
+                f"({peer_best['pnl_pct']:+.1f}%)"
+            )
+
+        if comparison:
+            lines.append(header)
+            lines.extend(comparison)
+            lines.append(
+                "NOTE: These are observations, not directives. Integrate or reject based on your own analysis."
+            )
+
+    return "\n".join(lines) if lines else ""
+
+
 def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
     """Format recent trades and P&L into a readable memory section."""
     if not trades:
@@ -898,6 +1301,7 @@ PROVIDER_DELAYS = {
 async def _run_trader(
     db, brief: dict, profile: dict, session: str = "close",
     all_ai_positions: list[dict] | None = None,
+    performance_intel: dict[str, str] | None = None,
 ) -> dict:
     """Run a single AI trader: get portfolio, ask LLM, execute trades."""
     user_id = profile["id"]
@@ -1017,6 +1421,11 @@ async def _run_trader(
         if all_ai_positions:
             cross_trader_text = _format_cross_trader_positions(all_ai_positions, user_id, brief)
 
+        # Performance intelligence (self-assessment + peer learning)
+        perf_intel_text = ""
+        if performance_intel:
+            perf_intel_text = performance_intel.get(user_id, "")
+
         # Ask AI for trades (with modular toolkit prompt)
         agentic_data = {
             "pattern_results": pattern_results,
@@ -1024,6 +1433,7 @@ async def _run_trader(
             "allocation": allocation,
             "sizing": sizing,
             "cross_trader_text": cross_trader_text,
+            "performance_intel": perf_intel_text,
         }
         trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data)
 
@@ -1063,6 +1473,7 @@ async def _run_trader(
 async def _run_provider_batch(
     db, brief: dict, profiles: list[dict], delay: int, session: str = "close",
     all_ai_positions: list[dict] | None = None,
+    performance_intel: dict[str, str] | None = None,
 ) -> list[dict]:
     """Run a batch of traders that share the same API provider, sequentially
     with the appropriate delay between calls."""
@@ -1070,7 +1481,7 @@ async def _run_provider_batch(
     print(f"[PIPELINE BATCH] Starting {len(profiles)} traders for provider={model_key}, delay={delay}s")
     results = []
     for i, profile in enumerate(profiles):
-        result = await _run_trader(db, brief, profile, session=session, all_ai_positions=all_ai_positions)
+        result = await _run_trader(db, brief, profile, session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
         results.append(result)
         # Delay between calls (skip after last one)
         if i < len(profiles) - 1:
@@ -1125,6 +1536,16 @@ async def run_ai_trading(session: str = "close") -> dict:
     except Exception:
         all_ai_positions = []
 
+    # Build performance intelligence once for all traders (1 batch of DB queries)
+    performance_intel: dict[str, str] = {}
+    try:
+        performance_intel = build_performance_intelligence(db)
+        if performance_intel:
+            print(f"[PIPELINE] Built performance intelligence for {len(performance_intel)} traders")
+    except Exception as e:
+        print(f"[PIPELINE] Performance intel failed (non-blocking): {e}")
+        performance_intel = {}
+
     # Group profiles by model key (= API provider)
     by_model: dict[str, list[dict]] = {}
     for profile in ai_profiles.data:
@@ -1145,7 +1566,7 @@ async def run_ai_trading(session: str = "close") -> dict:
     for model_key, profiles in by_model.items():
         delay = PROVIDER_DELAYS.get(model_key, 5)
         non_gemini_batches.append(
-            _run_provider_batch(db, brief, profiles, delay, session=session, all_ai_positions=all_ai_positions)
+            _run_provider_batch(db, brief, profiles, delay, session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
         )
 
     # Run Gemini (sequential) in parallel with all non-Gemini providers
@@ -1153,11 +1574,11 @@ async def run_ai_trading(session: str = "close") -> dict:
         results = []
         if gemini_pro:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session, all_ai_positions=all_ai_positions)
+                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
             )
         if gemini_flash:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session, all_ai_positions=all_ai_positions)
+                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
             )
         return results
 

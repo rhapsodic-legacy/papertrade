@@ -789,6 +789,11 @@ def assemble_toolkit_prompt(
     if cross_trader:
         parts.append(cross_trader)
 
+    # Performance intelligence (self-assessment + peer learning)
+    perf_intel = agentic_data.get("performance_intel", "")
+    if perf_intel:
+        parts.append(perf_intel)
+
     # Trading memory
     parts.append(f"## Your Trading Memory\n{trade_memory}")
 
