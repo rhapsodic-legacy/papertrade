@@ -844,7 +844,13 @@ def _format_peer_comparison(
         peer_label = peer_model.replace("llama", "Groq").replace("gemini-flash", "Gemini Flash").replace("gemini-pro", "Gemini Pro").replace("mistral", "Mistral")
         you_label = current_model.replace("llama", "Groq").replace("gemini-flash", "Gemini Flash").replace("gemini-pro", "Gemini Pro").replace("mistral", "Mistral")
 
-        header = f"### PEER INSIGHT (your {peer_label} counterpart runs the same strategy)"
+        header = (
+            f"### PEER INTELLIGENCE: {peer_label} counterpart\n"
+            f"Another AI running your EXACT same personality/strategy on the {peer_label} model.\n"
+            f"This is a COMPETITION — you are both trying to maximize returns independently.\n"
+            f"Their holdings differ from yours, so identical moves rarely make sense.\n"
+            f"Learn from their wins and mistakes, but YOU decide what's right for YOUR portfolio."
+        )
 
         comparison = []
 
@@ -853,13 +859,13 @@ def _format_peer_comparison(
         if abs(wr_diff) >= 10 and current_metrics.get("total_sells", 0) >= 3 and peer_metrics.get("total_sells", 0) >= 3:
             if wr_diff > 0:
                 comparison.append(
-                    f"You're outperforming your peer: {current_wr:.0f}% vs {peer_wr:.0f}% win rate. "
-                    f"Your approach is working better right now."
+                    f"You're outperforming this AI: {current_wr:.0f}% vs {peer_wr:.0f}% win rate. "
+                    f"Your approach is working — don't abandon what's winning."
                 )
             else:
                 comparison.append(
-                    f"Your peer has a higher win rate: {peer_wr:.0f}% vs your {current_wr:.0f}%. "
-                    f"Consider what they're doing differently."
+                    f"This AI has a higher win rate: {peer_wr:.0f}% vs your {current_wr:.0f}%. "
+                    f"Understand WHY, but don't blindly copy — your portfolio context is different."
                 )
 
         # P&L comparison
@@ -883,13 +889,14 @@ def _format_peer_comparison(
                 c_wr = c_stats["wins"] / c_total * 100
                 if p_wr - c_wr >= 20:
                     comparison.append(
-                        f"Peer excels at {atype}: {p_wr:.0f}% win rate (${p_stats['total_pnl']:+,.0f}) "
-                        f"vs your {c_wr:.0f}% (${c_stats['total_pnl']:+,.0f}). Study their {atype} approach."
+                        f"This AI excels at {atype}: {p_wr:.0f}% win rate (${p_stats['total_pnl']:+,.0f}) "
+                        f"vs your {c_wr:.0f}% (${c_stats['total_pnl']:+,.0f}). "
+                        f"Consider why — but remember their entry prices and timing differ from yours."
                     )
                 elif c_wr - p_wr >= 20:
                     comparison.append(
-                        f"You excel at {atype}: {c_wr:.0f}% win rate vs peer's {p_wr:.0f}%. "
-                        f"Your {atype} strategy is stronger."
+                        f"YOU outperform this AI at {atype}: {c_wr:.0f}% win rate vs their {p_wr:.0f}%. "
+                        f"Trust your {atype} instincts — your approach is working."
                     )
 
         # Specific recent trades that diverged (one bought, other sold same symbol)
@@ -919,26 +926,37 @@ def _format_peer_comparison(
                 })
 
         if divergences:
-            comparison.append("Recent strategy divergences with your peer:")
+            comparison.append(
+                "Recent strategy divergences (this AI made the OPPOSITE call — "
+                "understand their reasoning, but their position and timing differ from yours):"
+            )
             for d in divergences[:2]:
+                # Add staleness warning for trades > 3 days old
                 comparison.append(
-                    f"  {d['symbol']}: You {d['your_action'].upper()}d, peer {d['peer_action'].upper()}d. "
-                    f"Peer reasoning: \"{d['peer_reasoning']}\""
+                    f"  {d['symbol']}: You {d['your_action'].upper()}d, this AI {d['peer_action'].upper()}d. "
+                    f"Their reasoning: \"{d['peer_reasoning']}\" "
+                    f"(CAUTION: this trade already happened — the opportunity may have passed)"
                 )
 
-        # Peer's best trade (to learn from)
+        # Peer's best trade (to learn from — but not copy blindly)
         peer_best = peer_metrics.get("best_trade")
         if peer_best and peer_best["pnl"] > 500:
             comparison.append(
-                f"Peer's best recent trade: {peer_best['symbol']} for ${peer_best['pnl']:+,.0f} "
-                f"({peer_best['pnl_pct']:+.1f}%)"
+                f"This AI's best recent trade: {peer_best['symbol']} for ${peer_best['pnl']:+,.0f} "
+                f"({peer_best['pnl_pct']:+.1f}%) — note: this trade is ALREADY CLOSED. "
+                f"The same setup may not exist today."
             )
 
         if comparison:
             lines.append(header)
             lines.extend(comparison)
             lines.append(
-                "NOTE: These are observations, not directives. Integrate or reject based on your own analysis."
+                "\nREMEMBER: This peer is another AI, not a human expert. "
+                "They make mistakes too. You are competing against them. "
+                "Learn from their data, but make the best decision for YOUR portfolio, "
+                "YOUR current holdings, and TODAY's market conditions. "
+                "Copying a trade that already happened days ago is usually WRONG — "
+                "the price has already moved. Think independently. Decide for yourself."
             )
 
     return "\n".join(lines) if lines else ""
