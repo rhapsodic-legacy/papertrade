@@ -502,6 +502,45 @@ def _get_ai_trade_history(db, user_id: str, limit: int = 15) -> list[dict]:
     return resp.data if resp.data else []
 
 
+def _format_cross_trader_positions(
+    all_ai_positions: list[dict], current_user_id: str, brief: dict,
+) -> str:
+    """Format what other AI personalities currently hold."""
+    # Build price lookup from brief
+    prices: dict[str, float] = {}
+    for s in brief.get("stocks", []):
+        prices[s["symbol"]] = s["price"]
+    for c in brief.get("crypto", []):
+        prices[c["symbol"]] = c["price"]
+
+    # Group positions by personality (from display_name)
+    by_personality: dict[str, list[str]] = {}
+    for pos in all_ai_positions:
+        if pos["user_id"] == current_user_id:
+            continue
+        display = pos.get("display_name", "")
+        # Extract personality name (before the parenthesis)
+        pname = display.split("(")[0].strip() if "(" in display else display
+        sym = pos["symbol"]
+        qty = float(pos["quantity"])
+        price = prices.get(sym, 0)
+        value = qty * price
+        if value < 100:
+            continue
+        by_personality.setdefault(pname, []).append(f"{sym}")
+
+    if not by_personality:
+        return ""
+
+    lines = []
+    for pname, symbols in sorted(by_personality.items()):
+        # Deduplicate (multiple models share same personality)
+        unique = sorted(set(symbols))
+        lines.append(f"  {pname}: {', '.join(unique)}")
+
+    return "## What Other AI Traders Hold\n" + "\n".join(lines)
+
+
 def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
     """Format recent trades and P&L into a readable memory section."""
     if not trades:
@@ -857,7 +896,8 @@ PROVIDER_DELAYS = {
 
 
 async def _run_trader(
-    db, brief: dict, profile: dict, session: str = "close"
+    db, brief: dict, profile: dict, session: str = "close",
+    all_ai_positions: list[dict] | None = None,
 ) -> dict:
     """Run a single AI trader: get portfolio, ask LLM, execute trades."""
     user_id = profile["id"]
@@ -905,6 +945,15 @@ async def _run_trader(
         # Build trading memory from recent history
         recent_trades = _get_ai_trade_history(db, user_id, limit=15)
         trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
+
+        # Append reflection lessons if available
+        try:
+            from app.services.reflection import get_reflection_memory
+            reflections = get_reflection_memory(db, user_id, limit=5)
+            if reflections:
+                trade_memory += "\n\n" + reflections
+        except Exception:
+            pass
 
         # --- Agentic Pipeline Steps 3 & 4 (conditional on toolkit) ---
         personality = PERSONALITIES[personality_key]
@@ -954,11 +1003,27 @@ async def _run_trader(
                 portfolio["positions"], portfolio["cash"], total_value,
             )
 
+        # Confidence-weighted position sizing (only if optimizer in toolkit)
+        sizing: dict = {}
+        if "optimizer" in toolkit_modules and all_signals:
+            from app.services.portfolio_optimizer import compute_position_sizes
+            stock_vol = brief.get("stock_volatility", {})
+            sizing = compute_position_sizes(
+                all_signals, stock_vol, personality_key, risk_params, total_value, portfolio["cash"],
+            )
+
+        # Cross trader awareness
+        cross_trader_text = ""
+        if all_ai_positions:
+            cross_trader_text = _format_cross_trader_positions(all_ai_positions, user_id, brief)
+
         # Ask AI for trades (with modular toolkit prompt)
         agentic_data = {
             "pattern_results": pattern_results,
             "correlations": correlations,
             "allocation": allocation,
+            "sizing": sizing,
+            "cross_trader_text": cross_trader_text,
         }
         trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data)
 
@@ -996,7 +1061,8 @@ async def _run_trader(
 
 
 async def _run_provider_batch(
-    db, brief: dict, profiles: list[dict], delay: int, session: str = "close"
+    db, brief: dict, profiles: list[dict], delay: int, session: str = "close",
+    all_ai_positions: list[dict] | None = None,
 ) -> list[dict]:
     """Run a batch of traders that share the same API provider, sequentially
     with the appropriate delay between calls."""
@@ -1004,7 +1070,7 @@ async def _run_provider_batch(
     print(f"[PIPELINE BATCH] Starting {len(profiles)} traders for provider={model_key}, delay={delay}s")
     results = []
     for i, profile in enumerate(profiles):
-        result = await _run_trader(db, brief, profile, session=session)
+        result = await _run_trader(db, brief, profile, session=session, all_ai_positions=all_ai_positions)
         results.append(result)
         # Delay between calls (skip after last one)
         if i < len(profiles) - 1:
@@ -1040,6 +1106,25 @@ async def run_ai_trading(session: str = "close") -> dict:
     if not ai_profiles.data:
         return {"error": "No AI traders found. Run /api/ai/setup first."}
 
+    # Fetch all AI positions once for cross trader awareness (1 DB query)
+    all_ai_positions = []
+    try:
+        ai_user_ids = [p["id"] for p in ai_profiles.data]
+        pos_resp = (
+            db.table("positions")
+            .select("user_id, symbol, quantity")
+            .gt("quantity", 0)
+            .execute()
+        )
+        # Attach display_name to each position
+        name_map = {p["id"]: p["display_name"] for p in ai_profiles.data}
+        for pos in pos_resp.data:
+            if pos["user_id"] in name_map:
+                pos["display_name"] = name_map[pos["user_id"]]
+                all_ai_positions.append(pos)
+    except Exception:
+        all_ai_positions = []
+
     # Group profiles by model key (= API provider)
     by_model: dict[str, list[dict]] = {}
     for profile in ai_profiles.data:
@@ -1060,7 +1145,7 @@ async def run_ai_trading(session: str = "close") -> dict:
     for model_key, profiles in by_model.items():
         delay = PROVIDER_DELAYS.get(model_key, 5)
         non_gemini_batches.append(
-            _run_provider_batch(db, brief, profiles, delay, session=session)
+            _run_provider_batch(db, brief, profiles, delay, session=session, all_ai_positions=all_ai_positions)
         )
 
     # Run Gemini (sequential) in parallel with all non-Gemini providers
@@ -1068,11 +1153,11 @@ async def run_ai_trading(session: str = "close") -> dict:
         results = []
         if gemini_pro:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session)
+                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session, all_ai_positions=all_ai_positions)
             )
         if gemini_flash:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session)
+                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session, all_ai_positions=all_ai_positions)
             )
         return results
 

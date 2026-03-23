@@ -525,6 +525,130 @@ async def _fetch_upcoming_earnings(api_key: str) -> list[dict]:
         return []
 
 
+async def _fetch_economic_calendar(api_key: str) -> list[dict]:
+    """Fetch economic events for the next 7 days from Finnhub."""
+    today = date.today()
+    end = today + timedelta(days=7)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{FINNHUB_BASE}/calendar/economic",
+                params={
+                    "from": today.isoformat(),
+                    "to": end.isoformat(),
+                    "token": api_key,
+                },
+            )
+            if resp.status_code != 200:
+                return []
+            events = resp.json().get("economicCalendar", [])
+            # Filter to US events with medium/high impact
+            result = []
+            for e in events:
+                impact = e.get("impact", 0)
+                country = e.get("country", "")
+                if country != "US" or impact < 2:
+                    continue
+                event_date = e.get("time", "")[:10]
+                result.append({
+                    "event": e.get("event", "Unknown"),
+                    "date": event_date,
+                    "time": e.get("time", ""),
+                    "impact": impact,
+                    "estimate": e.get("estimate"),
+                    "actual": e.get("actual"),
+                    "prev": e.get("prev"),
+                    "unit": e.get("unit", ""),
+                    "is_today": event_date == today.isoformat(),
+                })
+            return result[:20]
+    except Exception:
+        return []
+
+
+async def _fetch_insider_transactions(
+    api_key: str, symbols: list[str]
+) -> dict[str, list[dict]]:
+    """Fetch insider transactions for stocks from Finnhub. Top 10 symbols."""
+    today = date.today()
+    cutoff = (today - timedelta(days=30)).isoformat()
+    result: dict[str, list[dict]] = {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        for symbol in symbols[:10]:
+            try:
+                await asyncio.sleep(0.5)
+                resp = await client.get(
+                    f"{FINNHUB_BASE}/stock/insider-transactions",
+                    params={"symbol": symbol, "token": api_key},
+                )
+                if resp.status_code != 200:
+                    continue
+                txns = resp.json().get("data", [])
+                significant = []
+                for t in txns:
+                    tx_date = t.get("transactionDate", "")
+                    if tx_date < cutoff:
+                        continue
+                    shares = abs(t.get("share", 0))
+                    price = t.get("transactionPrice", 0) or 0
+                    value = shares * price
+                    if value < 100_000:
+                        continue
+                    code = t.get("transactionCode", "")
+                    side = "buy" if code in ("P", "A") else "sell" if code == "S" else "other"
+                    if side == "other":
+                        continue
+                    significant.append({
+                        "name": t.get("name", "Unknown"),
+                        "side": side,
+                        "shares": shares,
+                        "value": round(value),
+                        "date": tx_date,
+                    })
+                if significant:
+                    result[symbol] = significant[:5]
+            except Exception:
+                continue
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Social/retail sentiment (StockTwits public API — no auth needed)
+# ---------------------------------------------------------------------------
+
+STOCKTWITS_BASE = "https://api.stocktwits.com/api/2"
+
+
+async def _fetch_social_sentiment(symbols: list[str]) -> dict[str, dict]:
+    """Fetch social sentiment from StockTwits for given symbols."""
+    result: dict[str, dict] = {}
+    async with httpx.AsyncClient(timeout=10) as client:
+        for symbol in symbols[:10]:
+            try:
+                resp = await client.get(
+                    f"{STOCKTWITS_BASE}/streams/symbol/{symbol}.json",
+                )
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                messages = data.get("messages", [])
+                if not messages:
+                    continue
+                bullish = sum(1 for m in messages if m.get("entities", {}).get("sentiment", {}).get("basic") == "Bullish")
+                bearish = sum(1 for m in messages if m.get("entities", {}).get("sentiment", {}).get("basic") == "Bearish")
+                total = len(messages)
+                labeled = bullish + bearish
+                result[symbol] = {
+                    "message_count": total,
+                    "bullish_pct": round(bullish / labeled * 100, 1) if labeled else None,
+                    "bearish_pct": round(bearish / labeled * 100, 1) if labeled else None,
+                    "volume_signal": "HIGH" if total >= 25 else "LOW" if total <= 5 else "NORMAL",
+                }
+            except Exception:
+                continue
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Crypto enrichment (from CoinGecko free tier)
 # ---------------------------------------------------------------------------
@@ -558,12 +682,19 @@ async def _fetch_crypto_market_data() -> dict[str, dict]:
                     continue
                 ath = coin.get("ath", 0)
                 price = coin.get("current_price", 0)
+                market_cap = coin.get("market_cap", 0)
+                volume_24h = coin.get("total_volume", 0)
                 result[symbol] = {
                     "market_cap_rank": coin.get("market_cap_rank"),
-                    "market_cap_b": round(coin.get("market_cap", 0) / 1e9, 2),
-                    "volume_24h_m": round(coin.get("total_volume", 0) / 1e6, 1),
+                    "market_cap_b": round(market_cap / 1e9, 2),
+                    "volume_24h_m": round(volume_24h / 1e6, 1),
                     "ath": ath,
                     "ath_drop_pct": round((1 - price / ath) * 100, 1) if ath else None,
+                    "price_change_7d": coin.get("price_change_percentage_7d_in_currency"),
+                    "price_change_14d": coin.get("price_change_percentage_14d_in_currency"),
+                    "price_change_30d": coin.get("price_change_percentage_30d_in_currency"),
+                    "market_cap_change_24h": coin.get("market_cap_change_percentage_24h"),
+                    "volume_to_mcap": round(volume_24h / market_cap * 100, 2) if market_cap else None,
                 }
             return result
     except Exception:
@@ -774,13 +905,19 @@ async def compile_market_brief() -> dict:
         funds = await _fetch_stock_fundamentals(settings.finnhub_api_key, top_symbols)
         recs = await _fetch_analyst_recommendations(settings.finnhub_api_key, top_symbols)
         earnings = await _fetch_upcoming_earnings(settings.finnhub_api_key)
-        return funds, recs, earnings
+        econ_cal = await _fetch_economic_calendar(settings.finnhub_api_key)
+        insider = await _fetch_insider_transactions(settings.finnhub_api_key, top_symbols)
+        return funds, recs, earnings, econ_cal, insider
 
-    (fundamentals, analyst_recs, earnings_calendar), stock_technicals, crypto_market = (
+    # Social sentiment uses StockTwits (separate API) — safe to run in parallel
+    social_symbols = [m["symbol"] for m in (movers_up[:5] + movers_down[:5])]
+
+    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment = (
         await asyncio.gather(
             _finnhub_enrichment(),
             _compute_stock_technicals(top_symbols),
             _fetch_crypto_market_data(),
+            _fetch_social_sentiment(social_symbols),
         )
     )
 
@@ -823,6 +960,9 @@ async def compile_market_brief() -> dict:
         "sector_performance": sector_performance,
         "stock_volatility": stock_volatility,
         "sentiment_scores": sentiment_scores,
+        "economic_calendar": economic_calendar,
+        "insider_transactions": insider_transactions,
+        "social_sentiment": social_sentiment,
     }
 
     # Compute day-over-day after regime/sectors are set

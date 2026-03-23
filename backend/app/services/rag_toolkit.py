@@ -325,6 +325,37 @@ def _format_fundamentals(brief: dict) -> str:
         if rec_lines:
             sections.append("### Analyst Consensus\n" + "\n".join(rec_lines))
 
+    # Insider transactions
+    insider = brief.get("insider_transactions", {})
+    if insider:
+        insider_lines = []
+        for sym, txns in insider.items():
+            buys = [t for t in txns if t["side"] == "buy"]
+            sells = [t for t in txns if t["side"] == "sell"]
+            buy_total = sum(t["value"] for t in buys)
+            sell_total = sum(t["value"] for t in sells)
+            if buys and not sells:
+                signal = "BULLISH (insiders buying)"
+            elif sells and not buys:
+                signal = "BEARISH (insiders selling)"
+            elif buy_total > sell_total * 2:
+                signal = "BULLISH (net insider buying)"
+            elif sell_total > buy_total * 2:
+                signal = "BEARISH (net insider selling)"
+            else:
+                signal = "MIXED"
+            names = ", ".join(t["name"].split()[-1] for t in txns[:3])
+            total_val = buy_total + sell_total
+            if total_val >= 1_000_000:
+                val_str = f"${total_val / 1_000_000:.1f}M"
+            else:
+                val_str = f"${total_val / 1_000:.0f}K"
+            insider_lines.append(
+                f"  {sym}: {len(buys)} buys / {len(sells)} sells ({val_str} total, {names}) -> {signal}"
+            )
+        if insider_lines:
+            sections.append("### Insider Transactions (last 30 days)\n" + "\n".join(insider_lines))
+
     # Earnings calendar
     earnings = brief.get("earnings_calendar", [])
     if earnings:
@@ -399,6 +430,32 @@ def _format_sentiment(brief: dict, invert: bool = False) -> str:
         if news_lines:
             sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
 
+    # Social/retail sentiment (StockTwits)
+    social = brief.get("social_sentiment", {})
+    if social:
+        social_lines = []
+        news_sent = sent.get("by_symbol", {}) if sent else {}
+        for sym, s in social.items():
+            bull = s.get("bullish_pct")
+            if bull is None:
+                continue
+            bear = s.get("bearish_pct", 0)
+            vol = s.get("volume_signal", "NORMAL")
+            line = f"  {sym}: {bull:.0f}% bullish / {bear:.0f}% bearish (volume: {vol})"
+            # Compare with news sentiment if available
+            news_score = news_sent.get(sym, {}).get("score")
+            if news_score is not None:
+                news_dir = "bullish" if news_score > 0.1 else "bearish" if news_score < -0.1 else "neutral"
+                social_dir = "bullish" if bull > 60 else "bearish" if bear > 60 else "mixed"
+                if news_dir != social_dir and news_dir != "neutral" and social_dir != "mixed":
+                    line += f" << DIVERGENCE: news {news_dir} vs social {social_dir}"
+            social_lines.append(line)
+        if social_lines:
+            header = "### Social/Retail Sentiment (StockTwits)"
+            if invert:
+                header += "\nCONTRARIAN NOTE: High social bullishness = everyone already bought. Look for extremes."
+            sections.append(header + "\n" + "\n".join(social_lines))
+
     # Day-over-day shifts
     dod = brief.get("day_over_day", {})
     if dod:
@@ -441,7 +498,7 @@ def _format_momentum(brief: dict) -> str:
     if losers:
         sections.append("### Top Losers (potential reversals or falling knives)\n" + json.dumps(losers, indent=2))
 
-    # Extract crypto market data (rank, volume, ATH distance) for momentum context
+    # Extract crypto market data (rank, volume, ATH distance, momentum) for context
     crypto_data = brief.get("crypto_market_data", {})
     if crypto_data:
         crypto_lines = []
@@ -459,6 +516,20 @@ def _format_momentum(brief: dict) -> str:
                 parts.append(f"{pct}% below ATH{' — ' + label if label else ''}")
             if parts:
                 crypto_lines.append(f"  {sym}: {', '.join(parts)}")
+
+            # Multi timeframe momentum
+            momentum_parts = []
+            for period, key in [("7d", "price_change_7d"), ("14d", "price_change_14d"), ("30d", "price_change_30d")]:
+                val = c.get(key)
+                if val is not None:
+                    momentum_parts.append(f"{period}: {val:+.1f}%")
+            vol_mcap = c.get("volume_to_mcap")
+            if vol_mcap is not None:
+                activity = "HIGH" if vol_mcap > 15 else "LOW" if vol_mcap < 3 else "NORMAL"
+                momentum_parts.append(f"Vol/MCap {vol_mcap}% ({activity})")
+            if momentum_parts:
+                crypto_lines.append(f"    Momentum: {', '.join(momentum_parts)}")
+
         if crypto_lines:
             sections.append("### Crypto Market Data\n" + "\n".join(crypto_lines))
 
@@ -508,11 +579,31 @@ def _format_macro(brief: dict) -> str:
             )
         sections.append("### SECTOR PERFORMANCE (today's rotation)\n" + "\n".join(sector_lines))
 
+    # Economic calendar (upcoming macro events)
+    econ = brief.get("economic_calendar", [])
+    if econ:
+        cal_lines = []
+        for e in econ:
+            impact_label = "HIGH IMPACT" if e.get("impact", 0) >= 3 else "MEDIUM"
+            prefix = ">>> TODAY: " if e.get("is_today") else f"  {e.get('date', '')}: "
+            parts = [f"{prefix}{e.get('event', '')} [{impact_label}]"]
+            est = e.get("estimate")
+            prev = e.get("prev")
+            actual = e.get("actual")
+            if actual is not None:
+                parts.append(f"Actual: {actual}{e.get('unit', '')}")
+            if est is not None:
+                parts.append(f"Est: {est}{e.get('unit', '')}")
+            if prev is not None:
+                parts.append(f"Prev: {prev}{e.get('unit', '')}")
+            cal_lines.append(", ".join(parts))
+        sections.append("### ECONOMIC CALENDAR (next 7 days)\n" + "\n".join(cal_lines))
+
     return "\n\n".join(sections)
 
 
-def _format_optimizer(correlations: list[dict], allocation: dict) -> str:
-    """Correlation warnings and allocation suggestions."""
+def _format_optimizer(correlations: list[dict], allocation: dict, sizing: dict | None = None) -> str:
+    """Correlation warnings, allocation suggestions, and position sizing."""
     sections = []
 
     if correlations:
@@ -547,6 +638,19 @@ def _format_optimizer(correlations: list[dict], allocation: dict) -> str:
             + "\n".join(sug_lines)
         )
 
+    # Position sizing suggestions
+    if sizing:
+        size_lines = []
+        for sym, info in sorted(sizing.items(), key=lambda x: -x[1]["suggested_pct"]):
+            size_lines.append(
+                f"  {sym}: ~{info['suggested_pct']}% (${info['dollar_amount']:,}) — {info['reasoning']}"
+            )
+        if size_lines:
+            sections.append(
+                "### SUGGESTED POSITION SIZES (based on signal strength and volatility)\n"
+                + "\n".join(size_lines)
+            )
+
     return "\n\n".join(sections)
 
 
@@ -576,6 +680,7 @@ _MODULE_FORMATTERS = {
     "optimizer": lambda ctx: _format_optimizer(
         ctx.get("correlations", []),
         ctx.get("allocation", {}),
+        ctx.get("sizing"),
     ),
 }
 
@@ -660,6 +765,7 @@ def assemble_toolkit_prompt(
         "pattern_results": agentic_data.get("pattern_results", {}),
         "correlations": agentic_data.get("correlations", []),
         "allocation": agentic_data.get("allocation", {}),
+        "sizing": agentic_data.get("sizing"),
     }
 
     for entry in sorted_toolkit:
@@ -677,6 +783,11 @@ def assemble_toolkit_prompt(
         section = formatter(ctx)
         if section:
             parts.append(section)
+
+    # Cross trader awareness (what other personalities hold)
+    cross_trader = agentic_data.get("cross_trader_text", "")
+    if cross_trader:
+        parts.append(cross_trader)
 
     # Trading memory
     parts.append(f"## Your Trading Memory\n{trade_memory}")

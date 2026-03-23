@@ -245,6 +245,72 @@ def compute_target_allocation(
     }
 
 
+def compute_position_sizes(
+    signal_scores: dict[str, dict],
+    volatility: dict[str, float],
+    personality_key: str,
+    risk_params: dict,
+    total_value: float,
+    cash: float,
+) -> dict[str, dict]:
+    """Compute suggested position sizes based on signal strength and volatility.
+
+    Returns {symbol: {suggested_pct, dollar_amount, shares_approx, reasoning}}.
+    Only includes symbols with BUY signals and available cash.
+    """
+    if total_value <= 0 or cash <= 0:
+        return {}
+
+    max_pos_pct = risk_params.get("max_position_pct", 15.0)
+    # Base allocation per position varies by personality aggressiveness
+    base_alloc = {
+        "vanilla": 6.0,
+        "steady_eddie": 5.0,
+        "yolo_bot": 10.0,
+        "contrarian_carl": 7.0,
+        "crypto_chad": 8.0,
+    }.get(personality_key, 6.0)
+
+    # Rank volatilities to scale position sizes (lower vol = bigger position)
+    vol_values = [v for v in volatility.values() if v and v > 0]
+    median_vol = sorted(vol_values)[len(vol_values) // 2] if vol_values else 25.0
+
+    result = {}
+    for sym, sig in signal_scores.items():
+        score = sig.get("score", 0)
+        if score < 20:
+            continue
+
+        # Scale by signal strength (20-100 range mapped to 0.2-1.0)
+        signal_factor = min(score, 100) / 100
+
+        # Scale by inverse volatility (high vol = smaller size)
+        sym_vol = volatility.get(sym, median_vol) or median_vol
+        vol_factor = median_vol / max(sym_vol, 5)
+        vol_factor = max(0.3, min(1.5, vol_factor))
+
+        suggested_pct = base_alloc * signal_factor * vol_factor
+        suggested_pct = min(suggested_pct, max_pos_pct)
+        suggested_pct = round(suggested_pct, 1)
+
+        dollar_amount = total_value * (suggested_pct / 100)
+        if dollar_amount > cash:
+            dollar_amount = cash
+            suggested_pct = round(dollar_amount / total_value * 100, 1)
+
+        if dollar_amount < 100:
+            continue
+
+        vol_label = "low" if sym_vol < 20 else "high" if sym_vol > 40 else "moderate"
+        result[sym] = {
+            "suggested_pct": suggested_pct,
+            "dollar_amount": round(dollar_amount),
+            "reasoning": f"signal {score:+d}, {vol_label} volatility ({sym_vol:.0f}%)",
+        }
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Format for AI prompt
 # ---------------------------------------------------------------------------

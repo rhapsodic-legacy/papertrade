@@ -85,6 +85,15 @@ async def trigger_ai_trading(
     return {"message": f"AI trading triggered ({session} session) — running in background"}
 
 
+@router.post("/reflection/trigger")
+async def trigger_reflections(background_tasks: BackgroundTasks):
+    """Daily cron: review settled trades and generate reflection lessons.
+    Run before trading so today's decisions benefit from past reflections.
+    Returns immediately; reflection runs in the background."""
+    background_tasks.add_task(asyncio.to_thread, _run_reflections_sync)
+    return {"message": "Trade reflection triggered — running in background"}
+
+
 @router.post("/commentary/trigger")
 async def trigger_commentary(background_tasks: BackgroundTasks):
     """Daily cron: generate commentary for all AI traders.
@@ -471,5 +480,22 @@ def _run_commentary_sync():
     except Exception as e:
         logger.error("Commentary sync failed: %s", e, exc_info=True)
         print(f"[COMMENTARY SYNC ERROR] {type(e).__name__}: {e}")
+    finally:
+        loop.close()
+
+
+def _run_reflections_sync():
+    """Wrapper to run the async reflection function from a sync context."""
+    from app.services.reflection import run_reflections
+    import logging
+    logger = logging.getLogger(__name__)
+    print("[REFLECTION SYNC] Starting reflection sync wrapper")
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(run_reflections())
+        print("[REFLECTION SYNC] Reflection sync completed successfully")
+    except Exception as e:
+        logger.error("Reflection sync failed: %s", e, exc_info=True)
+        print(f"[REFLECTION SYNC ERROR] {type(e).__name__}: {e}")
     finally:
         loop.close()
