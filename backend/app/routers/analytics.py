@@ -1,7 +1,13 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from app.services.analytics import get_trader_analytics, get_ai_comparison, _model_label, _clean_display_name
-from app.services.backtest import get_benchmark_comparison, get_enhancement_comparison
+from app.services.analytics import (
+    get_trader_analytics, get_ai_comparison, get_module_attribution,
+    get_reflection_trends, _model_label, _clean_display_name,
+)
+from app.services.backtest import (
+    get_benchmark_comparison, get_enhancement_comparison,
+    get_period_comparison, get_regime_analysis,
+)
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
@@ -46,3 +52,40 @@ async def benchmark(days: int = Query(90, ge=7, le=365)):
 async def enhancement():
     """Compare AI trader performance before vs after signal enhancements."""
     return await get_enhancement_comparison()
+
+
+@router.get("/modules")
+async def module_attribution(
+    trader_id: str | None = Query(None, description="Scope to a single trader"),
+):
+    """Which toolkit modules correlate with winning trades?
+    Shows win rate and P&L broken down by module for both buy and sell decisions."""
+    return await get_module_attribution(trader_id=trader_id)
+
+
+@router.get("/compare-periods")
+async def compare_periods(
+    a_start: str = Query(..., description="Period A start date (YYYY-MM-DD)"),
+    a_end: str = Query(..., description="Period A end date (YYYY-MM-DD)"),
+    b_start: str = Query(..., description="Period B start date (YYYY-MM-DD)"),
+    b_end: str = Query(..., description="Period B end date (YYYY-MM-DD)"),
+):
+    """Compare AI trader performance across two arbitrary date ranges.
+    Use to measure impact of any pipeline change."""
+    return await get_period_comparison(a_start, a_end, b_start, b_end)
+
+
+@router.get("/reflections")
+async def reflection_trends(
+    trader_id: str | None = Query(None, description="Scope to a single trader"),
+):
+    """Track reflection outcome scores over time. Shows whether AI traders
+    are learning from past mistakes — weekly trends and per-trader improvement."""
+    return await get_reflection_trends(trader_id=trader_id)
+
+
+@router.get("/regimes")
+async def regime_analysis(days: int = Query(90, ge=30, le=365)):
+    """Detect market regimes (bull/bear/sideways/high vol) from SPY,
+    then show each trader's win rate and P&L within each regime."""
+    return await get_regime_analysis(days=days)

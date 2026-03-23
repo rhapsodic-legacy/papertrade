@@ -154,6 +154,7 @@ def _compute_risk_metrics(snapshots: list[dict]) -> dict:
     if len(snapshots) < 2:
         return {
             "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
             "max_drawdown_pct": 0.0,
             "max_drawdown_date": None,
             "annualized_volatility": 0.0,
@@ -182,6 +183,14 @@ def _compute_risk_metrics(snapshots: list[dict]) -> dict:
         sharpe = (mean_excess / std * math.sqrt(TRADING_DAYS_PER_YEAR)) if std > 0 else 0.0
     else:
         sharpe = 0.0
+
+    # Sortino ratio (only penalizes downside volatility)
+    if daily_returns:
+        downside = [min(r - risk_free_daily, 0) for r in daily_returns]
+        downside_std = math.sqrt(sum(d ** 2 for d in downside) / len(downside))
+        sortino = (mean_excess / downside_std * math.sqrt(TRADING_DAYS_PER_YEAR)) if downside_std > 0 else 0.0
+    else:
+        sortino = 0.0
 
     # Annualized volatility
     vol = _std(daily_returns) * math.sqrt(TRADING_DAYS_PER_YEAR) if daily_returns else 0.0
@@ -213,6 +222,7 @@ def _compute_risk_metrics(snapshots: list[dict]) -> dict:
 
     return {
         "sharpe_ratio": round(sharpe, 2),
+        "sortino_ratio": round(sortino, 2),
         "max_drawdown_pct": round(max_dd, 2),
         "max_drawdown_date": max_dd_date,
         "annualized_volatility": round(vol * 100, 2),
@@ -358,6 +368,7 @@ async def get_ai_comparison() -> dict:
             "total_realized_pnl": trade_metrics["total_realized_pnl"],
             "profit_factor": trade_metrics["profit_factor"],
             "sharpe_ratio": risk_metrics["sharpe_ratio"],
+            "sortino_ratio": risk_metrics["sortino_ratio"],
             "max_drawdown_pct": risk_metrics["max_drawdown_pct"],
             "total_return_pct": risk_metrics["total_return_pct"],
             "annualized_volatility": risk_metrics["annualized_volatility"],
@@ -399,6 +410,7 @@ def _aggregate_group(group: list[dict]) -> dict:
         "avg_win_rate": round(sum(t["win_rate"] for t in group) / n, 1),
         "avg_return_pct": round(sum(t["total_return_pct"] for t in group) / n, 2),
         "avg_sharpe": round(sum(t["sharpe_ratio"] for t in group) / n, 2),
+        "avg_sortino": round(sum(t.get("sortino_ratio", 0) for t in group) / n, 2),
         "avg_max_drawdown": round(sum(t["max_drawdown_pct"] for t in group) / n, 2),
         "avg_profit_factor": round(sum(t["profit_factor"] for t in group) / n, 2),
         "total_trades": sum(t["total_trades"] for t in group),
@@ -710,6 +722,284 @@ def _compute_ai_rank(user_return: float, ai_returns: list[float]) -> dict:
     beats = sum(1 for r in ai_returns if user_return > r)
     rank = sum(1 for r in ai_returns if r > user_return) + 1
     return {"rank": rank, "beats": beats}
+
+
+async def get_reflection_trends(trader_id: str | None = None) -> dict:
+    """Track reflection outcome scores over time to measure learning.
+
+    Returns weekly averages of outcome_score per trader/personality,
+    showing whether trade quality is improving over time.
+    """
+    db = get_supabase_admin()
+
+    query = (
+        db.table("trade_reflections")
+        .select("user_id, symbol, side, outcome_score, reflection_text, lessons, reflected_at")
+        .order("reflected_at", desc=False)
+    )
+    if trader_id:
+        query = query.eq("user_id", trader_id)
+
+    resp = query.execute()
+    if not resp.data:
+        return {"trends": [], "by_trader": {}, "summary": {}}
+
+    # Get personality mapping
+    user_ids = list({r["user_id"] for r in resp.data})
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .in_("id", user_ids)
+        .execute()
+    )
+
+    from app.services.ai_trader import PERSONALITIES
+
+    profile_map = {}
+    for p in profiles_resp.data:
+        personality = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in p["display_name"]:
+                personality = pkey
+                break
+        profile_map[p["id"]] = {
+            "display_name": _clean_display_name(p["display_name"]),
+            "personality": personality,
+        }
+
+    # Group by week for trend
+    from datetime import datetime
+    weekly: dict[str, list[float]] = {}  # "YYYY-WW" -> scores
+    by_trader: dict[str, list[dict]] = {}  # user_id -> reflections
+
+    for r in resp.data:
+        score = float(r["outcome_score"])
+        ref_date = r["reflected_at"][:10]
+
+        # Week key
+        dt = datetime.strptime(ref_date, "%Y-%m-%d")
+        week_key = f"{dt.year}-W{dt.isocalendar()[1]:02d}"
+        weekly.setdefault(week_key, []).append(score)
+
+        # Per trader
+        uid = r["user_id"]
+        by_trader.setdefault(uid, []).append(score)
+
+    # Weekly trend
+    trends = []
+    for week, scores in sorted(weekly.items()):
+        avg = sum(scores) / len(scores)
+        trends.append({
+            "week": week,
+            "avg_score": round(avg, 3),
+            "count": len(scores),
+            "positive_pct": round(sum(1 for s in scores if s > 0) / len(scores) * 100, 1),
+        })
+
+    # Per trader summary
+    trader_summaries = {}
+    for uid, scores in by_trader.items():
+        info = profile_map.get(uid, {"display_name": "Unknown", "personality": None})
+        avg = sum(scores) / len(scores)
+        # Split into first half / second half to check improvement
+        mid = len(scores) // 2
+        first_half_avg = sum(scores[:mid]) / mid if mid > 0 else 0
+        second_half_avg = sum(scores[mid:]) / (len(scores) - mid) if len(scores) - mid > 0 else 0
+
+        trader_summaries[uid] = {
+            "display_name": info["display_name"],
+            "personality": info["personality"],
+            "total_reflections": len(scores),
+            "avg_score": round(avg, 3),
+            "positive_pct": round(sum(1 for s in scores if s > 0) / len(scores) * 100, 1),
+            "first_half_avg": round(first_half_avg, 3),
+            "second_half_avg": round(second_half_avg, 3),
+            "improving": second_half_avg > first_half_avg if mid > 0 else None,
+        }
+
+    # Overall summary
+    all_scores = [float(r["outcome_score"]) for r in resp.data]
+    improving_count = sum(1 for t in trader_summaries.values() if t.get("improving") is True)
+    total_with_data = sum(1 for t in trader_summaries.values() if t.get("improving") is not None)
+
+    return {
+        "trends": trends,
+        "by_trader": trader_summaries,
+        "summary": {
+            "total_reflections": len(all_scores),
+            "avg_outcome_score": round(sum(all_scores) / len(all_scores), 3),
+            "positive_pct": round(sum(1 for s in all_scores if s > 0) / len(all_scores) * 100, 1),
+            "traders_improving": improving_count,
+            "traders_with_data": total_with_data,
+        },
+    }
+
+
+async def get_module_attribution(trader_id: str | None = None) -> dict:
+    """Compute win rate and P&L broken down by which toolkit modules were active.
+
+    If trader_id is provided, scopes to one trader. Otherwise, all AI traders.
+    Uses the modules_used JSON field on transactions to attribute outcomes.
+    """
+    import json
+
+    db = get_supabase_admin()
+
+    if trader_id:
+        trader_ids = [trader_id]
+    else:
+        profiles_resp = (
+            db.table("profiles").select("id").eq("is_ai", True).execute()
+        )
+        trader_ids = [p["id"] for p in profiles_resp.data]
+
+    if not trader_ids:
+        return {"modules": {}, "total_trades_analyzed": 0}
+
+    tx_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, modules_used")
+        .in_("user_id", trader_ids)
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    if not tx_resp.data:
+        return {"modules": {}, "total_trades_analyzed": 0}
+
+    # Replay positions to compute per-sell P&L, then attribute to modules
+    positions: dict[str, dict[str, dict]] = {}  # user_id -> symbol -> {qty, cost_basis}
+    # Each sell gets: pnl, modules list
+    sell_records: list[dict] = []
+
+    for tx in tx_resp.data:
+        uid = tx["user_id"]
+        sym = tx["symbol"]
+        qty = float(tx["quantity"])
+        price = float(tx["price"])
+
+        if uid not in positions:
+            positions[uid] = {}
+
+        if tx["side"] == "buy":
+            if sym not in positions[uid]:
+                positions[uid][sym] = {"qty": 0.0, "cost_basis": 0.0}
+            pos = positions[uid][sym]
+            total_cost = pos["qty"] * pos["cost_basis"] + qty * price
+            pos["qty"] += qty
+            pos["cost_basis"] = total_cost / pos["qty"] if pos["qty"] > 0 else 0
+        else:
+            pos = positions[uid].get(sym)
+            if pos and pos["qty"] > 0:
+                pnl = (price - pos["cost_basis"]) * qty
+                # Parse modules from the sell transaction
+                modules = []
+                if tx.get("modules_used"):
+                    try:
+                        modules = json.loads(tx["modules_used"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                sell_records.append({"pnl": pnl, "modules": modules})
+                pos["qty"] -= qty
+                if pos["qty"] <= 0.001:
+                    pos["qty"] = 0
+                    pos["cost_basis"] = 0
+
+    # Also attribute buy decisions (did the module lead to good entries?)
+    # Track buys with their modules for entry quality analysis
+    buy_records: list[dict] = []
+    positions2: dict[str, dict[str, dict]] = {}
+    for tx in tx_resp.data:
+        uid = tx["user_id"]
+        sym = tx["symbol"]
+        qty = float(tx["quantity"])
+        price = float(tx["price"])
+
+        if uid not in positions2:
+            positions2[uid] = {}
+
+        if tx["side"] == "buy":
+            modules = []
+            if tx.get("modules_used"):
+                try:
+                    modules = json.loads(tx["modules_used"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if sym not in positions2[uid]:
+                positions2[uid][sym] = {"qty": 0.0, "cost_basis": 0.0, "buy_modules": modules}
+            pos = positions2[uid][sym]
+            total_cost = pos["qty"] * pos["cost_basis"] + qty * price
+            pos["qty"] += qty
+            pos["cost_basis"] = total_cost / pos["qty"] if pos["qty"] > 0 else 0
+            pos["buy_modules"] = modules  # latest buy's modules
+        else:
+            pos = positions2[uid].get(sym)
+            if pos and pos["qty"] > 0:
+                pnl = (price - pos["cost_basis"]) * qty
+                buy_records.append({"pnl": pnl, "modules": pos.get("buy_modules", [])})
+                pos["qty"] -= qty
+                if pos["qty"] <= 0.001:
+                    pos["qty"] = 0
+                    pos["cost_basis"] = 0
+
+    # Aggregate by module
+    module_stats: dict[str, dict] = {}
+
+    def _add_record(records: list[dict], prefix: str) -> None:
+        for rec in records:
+            for mod in rec["modules"]:
+                if mod not in module_stats:
+                    module_stats[mod] = {
+                        "sell_wins": 0, "sell_losses": 0, "sell_total_pnl": 0.0,
+                        "buy_wins": 0, "buy_losses": 0, "buy_total_pnl": 0.0,
+                        "total_trades": 0,
+                    }
+                stats = module_stats[mod]
+                stats["total_trades"] += 1
+                if rec["pnl"] > 0:
+                    stats[f"{prefix}_wins"] += 1
+                else:
+                    stats[f"{prefix}_losses"] += 1
+                stats[f"{prefix}_total_pnl"] += rec["pnl"]
+
+    _add_record(sell_records, "sell")
+    _add_record(buy_records, "buy")
+
+    # Format results
+    from app.services.rag_toolkit import RAG_MODULES
+
+    modules_result = {}
+    for mod, stats in module_stats.items():
+        sell_total = stats["sell_wins"] + stats["sell_losses"]
+        buy_total = stats["buy_wins"] + stats["buy_losses"]
+        meta = RAG_MODULES.get(mod, {})
+
+        modules_result[mod] = {
+            "label": meta.get("label", mod),
+            "color": meta.get("color", "#888"),
+            "sell_win_rate": round(stats["sell_wins"] / sell_total * 100, 1) if sell_total > 0 else 0,
+            "sell_trades": sell_total,
+            "sell_total_pnl": round(stats["sell_total_pnl"], 2),
+            "buy_win_rate": round(stats["buy_wins"] / buy_total * 100, 1) if buy_total > 0 else 0,
+            "buy_trades": buy_total,
+            "buy_total_pnl": round(stats["buy_total_pnl"], 2),
+            "combined_win_rate": round(
+                (stats["sell_wins"] + stats["buy_wins"]) /
+                max(sell_total + buy_total, 1) * 100, 1
+            ),
+            "combined_pnl": round(stats["sell_total_pnl"] + stats["buy_total_pnl"], 2),
+        }
+
+    # Sort by combined P&L
+    modules_result = dict(
+        sorted(modules_result.items(), key=lambda x: x[1]["combined_pnl"], reverse=True)
+    )
+
+    return {
+        "modules": modules_result,
+        "total_sells_analyzed": len(sell_records),
+        "total_buys_analyzed": len(buy_records),
+    }
 
 
 def _std(values: list[float]) -> float:

@@ -222,6 +222,279 @@ async def get_enhancement_comparison() -> dict:
     }
 
 
+async def get_regime_analysis(days: int = 90) -> dict:
+    """Detect market regimes from SPY data, then compute per-trader
+    win rate and return within each regime.
+
+    Regimes (rolling 10-day SPY return + volatility):
+    - BULL: SPY 10d return > +2%
+    - BEAR: SPY 10d return < -2%
+    - HIGH_VOL: 10d volatility > 1.5% daily but return between -2% and +2%
+    - SIDEWAYS: everything else
+    """
+    import math
+    from datetime import datetime
+
+    db = get_supabase_admin()
+
+    # Get SPY candles for regime classification
+    spy_candles = await get_stock_candles("SPY", days=days)
+    if not spy_candles or len(spy_candles) < 15:
+        return {"error": "Insufficient SPY data for regime detection"}
+
+    # Build date -> regime map using rolling 10-day windows
+    spy_by_date: dict[str, float] = {}
+    for c in spy_candles:
+        d = date.fromtimestamp(c["time"]).isoformat()
+        spy_by_date[d] = c["close"]
+
+    spy_dates = sorted(spy_by_date.keys())
+    spy_closes = [spy_by_date[d] for d in spy_dates]
+
+    regime_map: dict[str, str] = {}
+    for i in range(10, len(spy_closes)):
+        window = spy_closes[i - 10 : i + 1]
+        ret_10d = (window[-1] - window[0]) / window[0] * 100
+        daily_rets = [(window[j] / window[j - 1]) - 1 for j in range(1, len(window))]
+        vol = math.sqrt(sum(r ** 2 for r in daily_rets) / len(daily_rets)) * 100
+
+        if ret_10d > 2:
+            regime = "BULL"
+        elif ret_10d < -2:
+            regime = "BEAR"
+        elif vol > 1.5:
+            regime = "HIGH_VOL"
+        else:
+            regime = "SIDEWAYS"
+
+        regime_map[spy_dates[i]] = regime
+
+    if not regime_map:
+        return {"error": "Could not classify regimes"}
+
+    # Regime summary
+    regime_counts = {}
+    for r in regime_map.values():
+        regime_counts[r] = regime_counts.get(r, 0) + 1
+
+    # Get all AI traders and their trades in this period
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+    if not profiles_resp.data:
+        return {"error": "No AI traders found"}
+
+    trader_ids = [p["id"] for p in profiles_resp.data]
+    start_date = min(regime_map.keys())
+
+    tx_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, side, quantity, price, total, created_at")
+        .in_("user_id", trader_ids)
+        .gte("created_at", f"{start_date}T00:00:00")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    # Replay trades and tag each sell's P&L with the regime on trade date
+    positions: dict[str, dict[str, dict]] = {}
+    regime_pnl: dict[str, dict[str, list[float]]] = {}  # user_id -> regime -> [pnl]
+
+    for tx in tx_resp.data:
+        uid = tx["user_id"]
+        sym = tx["symbol"]
+        qty = float(tx["quantity"])
+        price = float(tx["price"])
+        trade_date = tx["created_at"][:10]
+
+        if uid not in positions:
+            positions[uid] = {}
+        if uid not in regime_pnl:
+            regime_pnl[uid] = {}
+
+        if tx["side"] == "buy":
+            if sym not in positions[uid]:
+                positions[uid][sym] = {"qty": 0.0, "cost_basis": 0.0}
+            pos = positions[uid][sym]
+            total_cost = pos["qty"] * pos["cost_basis"] + qty * price
+            pos["qty"] += qty
+            pos["cost_basis"] = total_cost / pos["qty"] if pos["qty"] > 0 else 0
+        else:
+            pos = positions[uid].get(sym)
+            if pos and pos["qty"] > 0:
+                pnl = (price - pos["cost_basis"]) * qty
+                regime = regime_map.get(trade_date, "UNKNOWN")
+                regime_pnl[uid].setdefault(regime, []).append(pnl)
+                pos["qty"] -= qty
+                if pos["qty"] <= 0.001:
+                    pos["qty"] = 0
+                    pos["cost_basis"] = 0
+
+    # Build per-trader regime performance
+    traders = []
+    for profile in profiles_resp.data:
+        uid = profile["id"]
+        by_regime = regime_pnl.get(uid, {})
+        if not by_regime:
+            continue
+
+        personality = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in profile["display_name"]:
+                personality = pkey
+                break
+
+        regime_stats = {}
+        for regime, pnls in by_regime.items():
+            if regime == "UNKNOWN":
+                continue
+            wins = [p for p in pnls if p > 0]
+            regime_stats[regime] = {
+                "trades": len(pnls),
+                "win_rate": round(len(wins) / len(pnls) * 100, 1) if pnls else 0,
+                "total_pnl": round(sum(pnls), 2),
+                "avg_pnl": round(sum(pnls) / len(pnls), 2) if pnls else 0,
+            }
+
+        traders.append({
+            "display_name": _clean_display_name(profile["display_name"]),
+            "model": _model_label(profile["ai_model"]),
+            "personality": personality,
+            "by_regime": regime_stats,
+        })
+
+    # Aggregate by personality across regimes
+    personality_regime: dict[str, dict[str, list[float]]] = {}
+    for uid, by_regime in regime_pnl.items():
+        profile = next((p for p in profiles_resp.data if p["id"] == uid), None)
+        if not profile:
+            continue
+        personality = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in profile["display_name"]:
+                personality = pkey
+                break
+        if not personality:
+            continue
+        for regime, pnls in by_regime.items():
+            if regime == "UNKNOWN":
+                continue
+            personality_regime.setdefault(personality, {}).setdefault(regime, []).extend(pnls)
+
+    personality_summary = {}
+    for pers, by_regime in personality_regime.items():
+        regime_stats = {}
+        for regime, pnls in by_regime.items():
+            wins = [p for p in pnls if p > 0]
+            regime_stats[regime] = {
+                "trades": len(pnls),
+                "win_rate": round(len(wins) / len(pnls) * 100, 1) if pnls else 0,
+                "total_pnl": round(sum(pnls), 2),
+            }
+        personality_summary[pers] = regime_stats
+
+    return {
+        "period_days": days,
+        "regimes": regime_counts,
+        "current_regime": regime_map.get(spy_dates[-1], "UNKNOWN") if spy_dates else "UNKNOWN",
+        "traders": traders,
+        "by_personality": personality_summary,
+    }
+
+
+async def get_period_comparison(
+    period_a_start: str,
+    period_a_end: str,
+    period_b_start: str,
+    period_b_end: str,
+) -> dict:
+    """Compare AI trader performance across two arbitrary date ranges.
+
+    Useful for measuring impact of any pipeline change by comparing
+    the period before vs after deployment.
+    """
+    db = get_supabase_admin()
+
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+    if not profiles_resp.data:
+        return {"error": "No AI traders found"}
+
+    trader_ids = [p["id"] for p in profiles_resp.data]
+
+    snap_resp = (
+        db.table("portfolio_snapshots")
+        .select("user_id, snapshot_date, total_value")
+        .in_("user_id", trader_ids)
+        .order("snapshot_date", desc=False)
+        .execute()
+    )
+
+    snap_by_user: dict[str, list] = {}
+    for s in snap_resp.data:
+        snap_by_user.setdefault(s["user_id"], []).append(s)
+
+    traders = []
+    for profile in profiles_resp.data:
+        uid = profile["id"]
+        snaps = snap_by_user.get(uid, [])
+        if len(snaps) < 3:
+            continue
+
+        a_snaps = [s for s in snaps if period_a_start <= s["snapshot_date"] <= period_a_end]
+        b_snaps = [s for s in snaps if period_b_start <= s["snapshot_date"] <= period_b_end]
+
+        personality = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in profile["display_name"]:
+                personality = pkey
+                break
+
+        a_metrics = _compute_period_metrics(a_snaps)
+        b_metrics = _compute_period_metrics(b_snaps)
+
+        improved = None
+        if a_metrics["days"] > 1 and b_metrics["days"] > 1:
+            improved = b_metrics["daily_return_avg"] > a_metrics["daily_return_avg"]
+
+        traders.append({
+            "display_name": _clean_display_name(profile["display_name"]),
+            "model": _model_label(profile["ai_model"]),
+            "personality": personality,
+            "period_a": a_metrics,
+            "period_b": b_metrics,
+            "improved": improved,
+        })
+
+    improved_count = sum(1 for t in traders if t.get("improved") is True)
+    total_with_data = sum(1 for t in traders if t.get("improved") is not None)
+
+    # Aggregate averages per period
+    a_returns = [t["period_a"]["daily_return_avg"] for t in traders if t["period_a"]["days"] > 1]
+    b_returns = [t["period_b"]["daily_return_avg"] for t in traders if t["period_b"]["days"] > 1]
+
+    return {
+        "period_a": {"start": period_a_start, "end": period_a_end},
+        "period_b": {"start": period_b_start, "end": period_b_end},
+        "traders": traders,
+        "summary": {
+            "total_traders": len(traders),
+            "with_both_periods": total_with_data,
+            "improved": improved_count,
+            "not_improved": total_with_data - improved_count,
+            "avg_daily_return_a": round(sum(a_returns) / len(a_returns), 4) if a_returns else 0,
+            "avg_daily_return_b": round(sum(b_returns) / len(b_returns), 4) if b_returns else 0,
+        },
+    }
+
+
 def _compute_period_metrics(snapshots: list[dict]) -> dict:
     """Compute return metrics for a period of snapshots."""
     if len(snapshots) < 2:
