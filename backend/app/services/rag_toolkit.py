@@ -78,6 +78,35 @@ RAG_MODULES: dict[str, dict] = {
 
 
 # ---------------------------------------------------------------------------
+# Module keyword detection (fallback when LLM omits modules_used)
+# ---------------------------------------------------------------------------
+
+MODULE_KEYWORDS: dict[str, list[str]] = {
+    "technicals": ["rsi", "sma", "ema", "macd", "bollinger", "atr", "overbought", "oversold", "technical"],
+    "patterns": ["pattern", "golden cross", "death cross", "support", "resistance", "candlestick", "crossover"],
+    "fundamentals": ["pe ratio", "pe ", "earnings", "dividend", "market cap", "analyst", "valuation", "fundamental"],
+    "sentiment": ["news", "sentiment", "headline", "contrarian"],
+    "momentum": ["momentum", "gainer", "loser", "volume spike", "relative volume"],
+    "macro": ["regime", "sector rotation", "spy", "safe haven", "small cap", "rate"],
+    "optimizer": ["correlation", "concentration", "rebalance", "allocation", "optimizer", "diversif"],
+}
+
+
+def detect_modules_from_text(text: str, active_modules: set[str] | None = None) -> list[str]:
+    """Scan reasoning text for module-related keywords. Returns detected module keys."""
+    if not text:
+        return []
+    lower = text.lower()
+    detected = []
+    for module, keywords in MODULE_KEYWORDS.items():
+        if active_modules and module not in active_modules:
+            continue
+        if any(kw in lower for kw in keywords):
+            detected.append(module)
+    return detected
+
+
+# ---------------------------------------------------------------------------
 # Per-module formatters
 # ---------------------------------------------------------------------------
 

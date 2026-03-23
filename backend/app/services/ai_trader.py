@@ -253,7 +253,8 @@ actively trimming, rotating, and rebalancing — not just accumulating.
 - If you have no positions yet, build an initial portfolio of 4-6 assets matching your strategy.
 
 Respond ONLY with valid JSON in this exact format, no other text:
-{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation)."}]}
+{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation).", "modules_used": ["technicals", "fundamentals"]}]}
+"modules_used" lists which of your Data Toolkit modules informed this trade decision. Use the module names from your toolkit manifest.
 """
 
 # Session-specific instructions appended to the system prompt
@@ -725,8 +726,10 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
 # Trade execution (bypasses market hours for AI)
 # ---------------------------------------------------------------------------
 
-async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
+async def _execute_ai_trade(user_id: str, trade: dict, active_modules: set[str] | None = None) -> dict | None:
     """Execute a single trade for an AI trader. Returns result or None on failure."""
+    from app.services.rag_toolkit import RAG_MODULES, detect_modules_from_text
+
     symbol = trade.get("symbol", "").upper()
     asset_type = trade.get("asset_type", "")
     side = trade.get("side", "")
@@ -801,7 +804,7 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
             else:
                 db.table("positions").update({"quantity": new_qty}).eq("id", existing["id"]).execute()
 
-        # Record transaction (reasoning column is nullable — works even before migration)
+        # Record transaction (reasoning + modules_used columns are nullable)
         tx_data = {
             "user_id": user_id,
             "symbol": symbol,
@@ -813,6 +816,22 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
         }
         if reasoning:
             tx_data["reasoning"] = reasoning[:500]  # Cap at 500 chars
+
+        # Determine which toolkit modules informed this trade
+        raw_modules = trade.get("modules_used", [])
+        if isinstance(raw_modules, list) and all(isinstance(m, str) for m in raw_modules):
+            modules_used = [m for m in raw_modules if m in RAG_MODULES]
+        else:
+            modules_used = []
+        # Fallback: detect from reasoning text if LLM omitted the field
+        if not modules_used and reasoning:
+            modules_used = detect_modules_from_text(reasoning, active_modules)
+        # Filter to only modules this personality actually has
+        if active_modules and modules_used:
+            modules_used = [m for m in modules_used if m in active_modules]
+        if modules_used:
+            tx_data["modules_used"] = json.dumps(modules_used)
+
         tx = db.table("transactions").insert(tx_data).execute()
 
         return tx.data[0] if tx.data else None
@@ -946,7 +965,7 @@ async def _run_trader(
         # Execute trades
         executed = []
         for trade in trades:
-            result = await _execute_ai_trade(user_id, trade)
+            result = await _execute_ai_trade(user_id, trade, active_modules=toolkit_modules)
             if result:
                 entry = {
                     "symbol": trade["symbol"],

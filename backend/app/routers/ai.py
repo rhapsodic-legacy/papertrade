@@ -5,10 +5,30 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
 from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
 from app.services.analytics import _model_label, _clean_display_name
-from app.services.rag_toolkit import get_personality_toolkit_info
+from app.services.rag_toolkit import get_personality_toolkit_info, RAG_MODULES
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
+
+
+def _enrich_modules(modules_json: str | None) -> list[dict]:
+    """Parse modules_used JSON string and attach module metadata."""
+    if not modules_json:
+        return []
+    import json
+    try:
+        modules = json.loads(modules_json)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [
+        {
+            "module": m,
+            "label": RAG_MODULES[m]["label"],
+            "colour": RAG_MODULES[m]["color"],
+        }
+        for m in modules
+        if m in RAG_MODULES
+    ]
 
 
 @router.post("/setup")
@@ -141,7 +161,7 @@ async def ai_trade_feed(
     # Fetch recent transactions with reasoning
     query = (
         db.table("transactions")
-        .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning")
+        .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning, modules_used")
         .in_("user_id", trader_ids)
         .not_.is_("reasoning", "null")
         .order("created_at", desc=True)
@@ -167,6 +187,7 @@ async def ai_trade_feed(
             "price": float(t["price"]),
             "total": float(t["total"]),
             "reasoning": t["reasoning"],
+            "modules_used": _enrich_modules(t.get("modules_used")),
             "created_at": t["created_at"],
         })
 
@@ -240,7 +261,7 @@ async def get_ai_trader_profile(trader_id: str):
     # Get recent trades (last 50)
     trades_resp = (
         db.table("transactions")
-        .select("symbol, asset_type, side, quantity, price, total, created_at, reasoning")
+        .select("symbol, asset_type, side, quantity, price, total, created_at, reasoning, modules_used")
         .eq("user_id", trader_id)
         .order("created_at", desc=True)
         .limit(50)
@@ -282,7 +303,10 @@ async def get_ai_trader_profile(trader_id: str):
         "invested_value": round(invested_value, 2),
         "total_value": round(total_value, 2),
         "positions": portfolio["positions"],
-        "trades": trades_resp.data,
+        "trades": [
+            {**t, "modules_used": _enrich_modules(t.get("modules_used"))}
+            for t in trades_resp.data
+        ],
         "commentary": commentary_resp.data,
         "snapshots": snapshots_resp.data,
     }

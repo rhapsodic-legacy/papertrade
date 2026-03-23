@@ -121,6 +121,7 @@ interface TraderProfile {
     total: number;
     created_at: string;
     reasoning: string | null;
+    modules_used?: { module: string; label: string; colour: string }[];
   }[];
   commentary: {
     commentary: string;
@@ -416,6 +417,18 @@ export default function TraderProfilePage() {
                             </span>{" "}
                             <span className="text-white">{t.quantity} {t.symbol}</span>
                           </div>
+                          {t.modules_used && t.modules_used.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {t.modules_used.map((m) => {
+                                const cls = TOOLKIT_COLORS[m.colour] || TOOLKIT_COLORS.gray;
+                                return (
+                                  <span key={m.module} className={`text-[10px] px-1.5 py-0.5 rounded border ${cls}`}>
+                                    {m.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                           {t.reasoning && (
                             <p className="text-xs text-gray-500 mt-0.5 leading-snug">{t.reasoning}</p>
                           )}

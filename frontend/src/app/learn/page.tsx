@@ -30,6 +30,12 @@ const MODEL_LABELS: Record<string, string> = {
   groq: "Groq",
 };
 
+type ModuleTag = {
+  module: string;
+  label: string;
+  colour: string;
+};
+
 type Trade = {
   trader_name: string;
   personality: string | null;
@@ -41,7 +47,19 @@ type Trade = {
   price: number;
   total: number;
   reasoning: string;
+  modules_used?: ModuleTag[];
   created_at: string;
+};
+
+const MODULE_BADGE_COLORS: Record<string, string> = {
+  blue: "bg-blue-900/40 text-blue-300 border-blue-700",
+  purple: "bg-purple-900/40 text-purple-300 border-purple-700",
+  green: "bg-green-900/40 text-green-300 border-green-700",
+  amber: "bg-amber-900/40 text-amber-300 border-amber-700",
+  red: "bg-red-900/40 text-red-300 border-red-700",
+  teal: "bg-teal-900/40 text-teal-300 border-teal-700",
+  indigo: "bg-indigo-900/40 text-indigo-300 border-indigo-700",
+  gray: "bg-gray-800/40 text-gray-300 border-gray-700",
 };
 
 function TradeCard({ trade }: { trade: Trade }) {
@@ -83,6 +101,20 @@ function TradeCard({ trade }: { trade: Trade }) {
           {formatCurrency(trade.total)}
         </span>
       </div>
+
+      {/* Module badges */}
+      {trade.modules_used && trade.modules_used.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {trade.modules_used.map((m) => (
+            <span
+              key={m.module}
+              className={`text-xs px-2 py-0.5 rounded border ${MODULE_BADGE_COLORS[m.colour] || MODULE_BADGE_COLORS.gray}`}
+            >
+              {m.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Reasoning */}
       <div className="bg-gray-950 rounded-md p-3 border border-gray-800">
@@ -250,6 +282,18 @@ function MiniTradeCard({ trade, highlighted }: { trade: Trade; highlighted: bool
           <span className="text-xs text-blue-400 ml-auto">shared</span>
         )}
       </div>
+      {trade.modules_used && trade.modules_used.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {trade.modules_used.map((m) => (
+            <span
+              key={m.module}
+              className={`text-[10px] px-1.5 py-0.5 rounded border ${MODULE_BADGE_COLORS[m.colour] || MODULE_BADGE_COLORS.gray}`}
+            >
+              {m.label}
+            </span>
+          ))}
+        </div>
+      )}
       <p className={`text-xs text-gray-400 leading-relaxed ${!expanded && "line-clamp-2"}`}>
         {trade.reasoning}
       </p>
