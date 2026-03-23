@@ -284,6 +284,72 @@ async def get_ai_trader_profile(trader_id: str):
     }
 
 
+@router.get("/diagnostics")
+async def pipeline_diagnostics():
+    """Show today's trade activity grouped by AI model — quick health check."""
+    from datetime import date
+
+    db = get_supabase_admin()
+    today = date.today().isoformat()
+
+    # All AI profiles
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+    profiles_by_id = {p["id"]: p for p in (profiles_resp.data or [])}
+
+    # Today's trades by AI traders
+    trades_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, side, quantity, price, created_at")
+        .in_("user_id", list(profiles_by_id.keys()))
+        .gte("created_at", f"{today}T00:00:00")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    # Group by model
+    by_model: dict[str, list] = {}
+    for t in (trades_resp.data or []):
+        profile = profiles_by_id.get(t["user_id"], {})
+        model = profile.get("ai_model", "unknown")
+        display = _clean_display_name(profile.get("display_name", "?"))
+        by_model.setdefault(model, []).append({
+            "trader": display,
+            "symbol": t["symbol"],
+            "side": t["side"],
+            "qty": t["quantity"],
+            "price": t["price"],
+            "time": t["created_at"],
+        })
+
+    # Summary per model
+    summary = {}
+    for model, trades in by_model.items():
+        traders_active = len(set(t["trader"] for t in trades))
+        summary[model] = {
+            "trades_today": len(trades),
+            "active_traders": traders_active,
+            "trades": trades,
+        }
+
+    # List models with zero trades
+    all_models = set(p.get("ai_model", "unknown") for p in profiles_resp.data or [])
+    for m in all_models:
+        if m not in summary:
+            summary[m] = {"trades_today": 0, "active_traders": 0, "trades": []}
+
+    return {
+        "date": today,
+        "total_ai_profiles": len(profiles_by_id),
+        "total_trades_today": len(trades_resp.data or []),
+        "by_model": summary,
+    }
+
+
 def _run_trading_sync(session: str = "close"):
     """Wrapper to run the async trading function from a sync context."""
     import logging
