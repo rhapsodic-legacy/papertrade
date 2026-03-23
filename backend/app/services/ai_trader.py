@@ -182,9 +182,9 @@ MODELS = {
         "model_id": "mistral-large-latest",
     },
     "llama": {
-        "label": "GPT",
-        "api": "cerebras",
-        "model_id": "gpt-oss-120b",
+        "label": "Groq",
+        "api": "groq",
+        "model_id": "llama-3.3-70b-versatile",
     },
 }
 
@@ -464,9 +464,9 @@ async def _call_mistral(model_id: str, system: str, user_msg: str, api_key: str)
         return data["choices"][0]["message"]["content"]
 
 
-async def _call_cerebras(model_id: str, system: str, user_msg: str, api_key: str) -> str:
-    """Call Cerebras API (OpenAI-compatible)."""
-    url = "https://api.cerebras.ai/v1/chat/completions"
+async def _call_groq(model_id: str, system: str, user_msg: str, api_key: str) -> str:
+    """Call Groq API (OpenAI-compatible)."""
+    url = "https://api.groq.com/openai/v1/chat/completions"
     payload = {
         "model": model_id,
         "messages": [
@@ -483,7 +483,7 @@ async def _call_cerebras(model_id: str, system: str, user_msg: str, api_key: str
             json=payload,
         )
         if resp.status_code != 200:
-            raise Exception(f"Cerebras {model_id} error {resp.status_code}: {resp.text[:300]}")
+            raise Exception(f"Groq {model_id} error {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
@@ -693,10 +693,10 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
         if not settings.mistral_api_key:
             raise Exception("MISTRAL_API_KEY not configured")
         raw = await _call_mistral(model_cfg["model_id"], system_prompt, user_msg, settings.mistral_api_key)
-    elif api == "cerebras":
-        if not settings.cerebras_api_key:
-            raise Exception("CEREBRAS_API_KEY not configured")
-        raw = await _call_cerebras(model_cfg["model_id"], system_prompt, user_msg, settings.cerebras_api_key)
+    elif api == "groq":
+        if not settings.groq_api_key:
+            raise Exception("GROQ_API_KEY not configured")
+        raw = await _call_groq(model_cfg["model_id"], system_prompt, user_msg, settings.groq_api_key)
     else:
         raise Exception(f"Unknown API: {api}")
 
@@ -828,7 +828,7 @@ async def _execute_ai_trade(user_id: str, trade: dict) -> dict | None:
 # Provider-specific rate limit delays (seconds between calls).
 # These are tuned for free tier limits:
 #   Gemini Pro: 2 RPM → 35s   |  Gemini Flash: 15 RPM → 5s
-#   Mistral: generous → 3s    |  Cerebras: generous → 3s
+#   Mistral: generous → 3s    |  Groq: generous → 3s
 PROVIDER_DELAYS = {
     "gemini-pro": 35,
     "gemini-flash": 5,
@@ -980,7 +980,7 @@ async def run_ai_trading(session: str = "close") -> dict:
 
     Old approach: 20 traders × 35s = ~12 min (one-size-fits-all delay).
     New approach: group by provider, use provider-specific delays, run
-    Mistral and Cerebras in parallel with each other (different APIs).
+    Mistral and Groq in parallel with each other (different APIs).
 
     Estimated time: ~4 min (dominated by 5 Gemini Pro calls × 35s).
     """
@@ -1011,7 +1011,7 @@ async def run_ai_trading(session: str = "close") -> dict:
 
     # Run Gemini Pro first (slowest — 35s between calls, bottleneck)
     # Then run Gemini Flash (same API, different rate limit — must be sequential with Pro)
-    # Meanwhile, Mistral and Cerebras use different APIs and can run in parallel
+    # Meanwhile, Mistral and Groq use different APIs and can run in parallel
     all_results = []
 
     # Phase 1: Gemini calls (must be sequential — same API key)

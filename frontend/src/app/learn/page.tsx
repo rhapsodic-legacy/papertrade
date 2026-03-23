@@ -27,7 +27,7 @@ const PERSONALITY_COLORS: Record<string, string> = {
 const MODEL_LABELS: Record<string, string> = {
   gemini: "Gemini",
   mistral: "Mistral",
-  cerebras: "GPT (Cerebras)",
+  groq: "Groq",
 };
 
 type Trade = {

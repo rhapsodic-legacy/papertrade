@@ -26,23 +26,27 @@ async def setup_ai_traders():
 
 @router.post("/fix-display-names")
 async def fix_display_names():
-    """One-time: rename 'Llama' to 'GPT' in all DB display_name fields."""
+    """One-time: rename legacy model names (Llama/GPT) to 'Groq' in all DB display_name fields."""
     db = get_supabase_admin()
     fixed = {"profiles": 0, "ai_commentary": 0}
 
-    # Fix profiles table
-    profiles = db.table("profiles").select("id, display_name").like("display_name", "%Llama%").execute()
-    for p in profiles.data:
-        new_name = _clean_display_name(p["display_name"])
-        db.table("profiles").update({"display_name": new_name}).eq("id", p["id"]).execute()
-        fixed["profiles"] += 1
+    # Fix profiles table — match Llama or GPT
+    for pattern in ["%Llama%", "%GPT%"]:
+        profiles = db.table("profiles").select("id, display_name").like("display_name", pattern).execute()
+        for p in profiles.data:
+            new_name = _clean_display_name(p["display_name"])
+            if new_name != p["display_name"]:
+                db.table("profiles").update({"display_name": new_name}).eq("id", p["id"]).execute()
+                fixed["profiles"] += 1
 
     # Fix ai_commentary table
-    commentary = db.table("ai_commentary").select("id, display_name").like("display_name", "%Llama%").execute()
-    for c in commentary.data:
-        new_name = _clean_display_name(c["display_name"])
-        db.table("ai_commentary").update({"display_name": new_name}).eq("id", c["id"]).execute()
-        fixed["ai_commentary"] += 1
+    for pattern in ["%Llama%", "%GPT%"]:
+        commentary = db.table("ai_commentary").select("id, display_name").like("display_name", pattern).execute()
+        for c in commentary.data:
+            new_name = _clean_display_name(c["display_name"])
+            if new_name != c["display_name"]:
+                db.table("ai_commentary").update({"display_name": new_name}).eq("id", c["id"]).execute()
+                fixed["ai_commentary"] += 1
 
     return {"message": "Display names fixed", "updated": fixed}
 
@@ -359,24 +363,24 @@ async def ping_providers():
     settings = get_settings()
     results = {}
 
-    # Cerebras
+    # Groq
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://api.cerebras.ai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.cerebras_api_key}", "Content-Type": "application/json"},
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "gpt-oss-120b",
+                    "model": "llama-3.3-70b-versatile",
                     "messages": [{"role": "user", "content": "Say OK"}],
                     "max_tokens": 5,
                 },
             )
             if resp.status_code == 200:
-                results["cerebras"] = {"status": "ok", "response": resp.json()["choices"][0]["message"]["content"][:50]}
+                results["groq"] = {"status": "ok", "response": resp.json()["choices"][0]["message"]["content"][:50]}
             else:
-                results["cerebras"] = {"status": "error", "code": resp.status_code, "body": resp.text[:300]}
+                results["groq"] = {"status": "error", "code": resp.status_code, "body": resp.text[:300]}
     except Exception as e:
-        results["cerebras"] = {"status": "exception", "error": str(e)[:200]}
+        results["groq"] = {"status": "exception", "error": str(e)[:200]}
 
     # Mistral
     try:

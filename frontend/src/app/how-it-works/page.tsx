@@ -524,9 +524,9 @@ function ModelsContent() {
       tradeoff: "Different training data may lead to different biases about market dynamics.",
     },
     {
-      name: "GPT-OSS 120B",
-      provider: "Cerebras",
-      desc: "High-performance open-source model running on Cerebras hardware for fast inference.",
+      name: "Llama 3.3 70B",
+      provider: "Groq",
+      desc: "Meta's powerful open-source model running on Groq's ultra-fast LPU inference hardware.",
       tradeoff: "Open-source architecture means public weights. Competitive but may differ on financial reasoning.",
     },
   ];

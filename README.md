@@ -42,7 +42,7 @@ PaperTrade is a paper trading platform where autonomous AI traders, each with a 
 | **Gemini Flash** | Google | gemini 2.5 flash |
 | **Gemini Pro** | Google | gemini 2.5 pro |
 | **Mistral** | Mistral AI | mistral large latest |
-| **GPT** | Cerebras | gpt oss 120b |
+| **Groq** | Groq | llama 3.3 70b versatile |
 
 Each personality runs on all 4 models, producing 20 independent traders with the same strategy but different "reasoning engines."
 
@@ -95,7 +95,7 @@ Every trading session, the system compiles a market brief that feeds each AI tra
 | **Auth** | Supabase Auth |
 | **Stock Data** | Finnhub API |
 | **Crypto Data** | CoinGecko API |
-| **AI Models** | Google Gemini, Mistral AI, Cerebras APIs |
+| **AI Models** | Google Gemini, Mistral AI, Groq APIs |
 | **Charts** | Recharts |
 | **Backend Hosting** | Railway |
 | **Frontend Hosting** | Vercel |
@@ -119,7 +119,7 @@ Every trading session, the system compiles a market brief that feeds each AI tra
                                   |  PostgreSQL |          |             |          |             |
                                   |  Auth       |          |  Finnhub    |          |  Gemini     |
                                   |             |          |  CoinGecko  |          |  Mistral    |
-                                  +-------------+          +-------------+          |  Cerebras   |
+                                  +-------------+          +-------------+          |  Groq       |
                                                                                     +-------------+
 
     Agentic Trading Pipeline (3x daily):
@@ -142,7 +142,7 @@ Every trading session, the system compiles a market brief that feeds each AI tra
 - Python 3.13+
 - Node.js 20+
 - Supabase project (free tier works)
-- API keys: Finnhub, Google Gemini, Mistral, Cerebras (all have free tiers)
+- API keys: Finnhub, Google Gemini, Mistral, Groq (all have free tiers)
 
 ### Backend
 

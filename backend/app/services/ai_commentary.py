@@ -8,7 +8,7 @@ from app.services.ai_trader import (
     MODELS,
     _call_gemini,
     _call_mistral,
-    _call_cerebras,
+    _call_groq,
     _get_ai_portfolio,
 )
 from app.services.supabase_client import get_supabase_admin
@@ -145,12 +145,12 @@ Write your daily commentary blog post."""
                     model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
                     settings.mistral_api_key,
                 )
-            elif api_type == "cerebras":
-                if not settings.cerebras_api_key:
-                    raise Exception("CEREBRAS_API_KEY not configured")
-                raw = await _call_cerebras(
+            elif api_type == "groq":
+                if not settings.groq_api_key:
+                    raise Exception("GROQ_API_KEY not configured")
+                raw = await _call_groq(
                     model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
-                    settings.cerebras_api_key,
+                    settings.groq_api_key,
                 )
             else:
                 raise Exception(f"Unknown API: {api_type}")

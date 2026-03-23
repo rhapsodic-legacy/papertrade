@@ -20,7 +20,7 @@ MODEL_DISPLAY_LABELS = {
     "gemini-flash": "Gemini Flash",
     "gemini-pro": "Gemini Pro",
     "mistral": "Mistral",
-    "llama": "GPT",
+    "llama": "Groq",
 }
 
 
@@ -29,8 +29,8 @@ def _model_label(key: str) -> str:
 
 
 def _clean_display_name(name: str) -> str:
-    """Replace legacy model names in display names (e.g. 'Vanilla (Llama)' -> 'Vanilla (GPT)')."""
-    return name.replace("Llama", "GPT").replace("llama", "GPT")
+    """Replace legacy model names in display names (e.g. 'Vanilla (Llama)' -> 'Vanilla (Groq)')."""
+    return name.replace("Llama", "Groq").replace("llama", "Groq").replace("GPT", "Groq")
 
 
 async def get_trader_analytics(trader_id: str) -> dict:
