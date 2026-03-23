@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.services.analytics import (
     get_trader_analytics, get_ai_comparison, get_module_attribution,
-    get_reflection_trends, _model_label, _clean_display_name,
+    get_reflection_trends, get_trade_reasoning, _model_label, _clean_display_name,
 )
 from app.services.backtest import (
     get_benchmark_comparison, get_enhancement_comparison,
@@ -89,3 +89,15 @@ async def regime_analysis(days: int = Query(90, ge=30, le=365)):
     """Detect market regimes (bull/bear/sideways/high vol) from SPY,
     then show each trader's win rate and P&L within each regime."""
     return await get_regime_analysis(days=days)
+
+
+@router.get("/reasoning")
+async def trade_reasoning(
+    days: int = Query(7, ge=1, le=90, description="How many days back to look"),
+    trader_id: str | None = Query(None, description="Filter to a single trader"),
+    symbol: str | None = Query(None, description="Filter to a single symbol"),
+):
+    """AI trade reasoning viewer. Shows every AI trade with full reasoning,
+    modules used, grouped by date. Flags convergence (3+ AIs making the same
+    call on the same symbol) as potential herd behavior."""
+    return await get_trade_reasoning(days=days, trader_id=trader_id, symbol=symbol)

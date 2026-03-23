@@ -1002,6 +1002,141 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
     }
 
 
+async def get_trade_reasoning(
+    days: int = 7,
+    trader_id: str | None = None,
+    symbol: str | None = None,
+) -> dict:
+    """Viewer-friendly breakdown of AI trade reasoning.
+
+    Groups trades by date, shows each AI's reasoning and modules used,
+    and flags convergence (multiple AIs making the same call on the same
+    symbol on the same day) so users can spot herd behavior vs independent
+    thinking.
+    """
+    db = get_supabase_admin()
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    # Fetch AI profiles
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+    profile_map = {
+        p["id"]: {
+            "display_name": _clean_display_name(p.get("display_name", "")),
+            "model": _model_label(p.get("ai_model", "")),
+        }
+        for p in (profiles_resp.data or [])
+    }
+    ai_ids = list(profile_map.keys())
+
+    # Fetch trades
+    query = (
+        db.table("transactions")
+        .select("user_id, symbol, asset_type, side, quantity, price, total, reasoning, modules_used, created_at")
+        .gte("created_at", f"{cutoff}T00:00:00")
+        .order("created_at", desc=True)
+        .limit(2000)
+    )
+    if trader_id:
+        query = query.eq("user_id", trader_id)
+    else:
+        query = query.in_("user_id", ai_ids)
+    if symbol:
+        query = query.eq("symbol", symbol.upper())
+
+    resp = query.execute()
+    trades = resp.data or []
+
+    # Group by date
+    import json as _json
+    by_date: dict[str, list] = {}
+    for t in trades:
+        day = t["created_at"][:10]
+        profile = profile_map.get(t["user_id"], {})
+
+        modules = []
+        if t.get("modules_used"):
+            try:
+                modules = _json.loads(t["modules_used"]) if isinstance(t["modules_used"], str) else t["modules_used"]
+            except Exception:
+                pass
+
+        entry = {
+            "trader": profile.get("display_name", "Unknown"),
+            "model": profile.get("model", ""),
+            "symbol": t["symbol"],
+            "asset_type": t.get("asset_type", ""),
+            "side": t["side"],
+            "quantity": t["quantity"],
+            "price": t["price"],
+            "total": t.get("total", 0),
+            "reasoning": t.get("reasoning", ""),
+            "modules_used": modules,
+            "time": t["created_at"][11:19] if len(t["created_at"]) > 11 else "",
+        }
+        by_date.setdefault(day, []).append(entry)
+
+    # Detect convergence: multiple AIs making the same side call on the same
+    # symbol on the same day
+    convergence_flags = []
+    for day, day_trades in by_date.items():
+        # Group by (symbol, side)
+        sym_side: dict[tuple, list] = {}
+        for t in day_trades:
+            key = (t["symbol"], t["side"])
+            sym_side.setdefault(key, []).append(t["trader"])
+        for (sym, side), traders_list in sym_side.items():
+            if len(traders_list) >= 3:
+                convergence_flags.append({
+                    "date": day,
+                    "symbol": sym,
+                    "side": side,
+                    "traders": traders_list,
+                    "count": len(traders_list),
+                    "warning": (
+                        f"{len(traders_list)} AIs all {side.upper()}ing {sym} on the same day — "
+                        f"possible herd behavior"
+                    ),
+                })
+
+    # Per-trader summary: most common modules, trade count
+    trader_summaries = {}
+    for t in trades:
+        profile = profile_map.get(t["user_id"], {})
+        name = profile.get("display_name", "Unknown")
+        if name not in trader_summaries:
+            trader_summaries[name] = {"model": profile.get("model", ""), "trades": 0, "module_counts": {}}
+        trader_summaries[name]["trades"] += 1
+        modules = []
+        if t.get("modules_used"):
+            try:
+                modules = _json.loads(t["modules_used"]) if isinstance(t["modules_used"], str) else t["modules_used"]
+            except Exception:
+                pass
+        for m in modules:
+            trader_summaries[name]["module_counts"][m] = trader_summaries[name]["module_counts"].get(m, 0) + 1
+
+    # Format top modules per trader
+    for name, summary in trader_summaries.items():
+        mc = summary.pop("module_counts")
+        summary["top_modules"] = sorted(mc.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    return {
+        "days": days,
+        "total_trades": len(trades),
+        "dates": {
+            day: sorted(entries, key=lambda x: x["time"])
+            for day, entries in sorted(by_date.items(), reverse=True)
+        },
+        "convergence_alerts": sorted(convergence_flags, key=lambda x: x["date"], reverse=True),
+        "trader_summaries": trader_summaries,
+    }
+
+
 def _std(values: list[float]) -> float:
     """Standard deviation of a list of floats."""
     if len(values) < 2:
