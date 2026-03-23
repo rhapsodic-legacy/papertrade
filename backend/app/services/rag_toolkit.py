@@ -338,29 +338,64 @@ def _format_fundamentals(brief: dict) -> str:
 
 
 def _format_sentiment(brief: dict, invert: bool = False) -> str:
-    """News headlines, company news, and day-over-day context."""
+    """News headlines, company news, sentiment scores, and day-over-day context."""
     sections = []
     header_suffix = " (CONTRARIAN LENS)" if invert else ""
 
-    # General market news
+    # Sentiment summary (when scores are available)
+    sent = brief.get("sentiment_scores", {})
+    if sent and sent.get("market_sentiment") is not None:
+        market_score = sent["market_sentiment"]
+        if market_score > 0.3:
+            mood = "bullish"
+        elif market_score > 0.1:
+            mood = "moderately bullish"
+        elif market_score > -0.1:
+            mood = "neutral"
+        elif market_score > -0.3:
+            mood = "moderately bearish"
+        else:
+            mood = "bearish"
+        summary_lines = [
+            f"  Overall market sentiment: {market_score:+.2f} ({mood}, "
+            f"{sent.get('scored_headline_count', 0)} headlines scored)"
+        ]
+        by_symbol = sent.get("by_symbol", {})
+        if by_symbol:
+            sym_parts = [
+                f"{sym}: {info['score']:+.2f} ({info['headline_count']})"
+                for sym, info in sorted(by_symbol.items(), key=lambda x: -abs(x[1]["score"]))[:5]
+            ]
+            summary_lines.append(f"  Per-symbol: {' | '.join(sym_parts)}")
+        cats = sent.get("categories_summary", {})
+        if cats:
+            top_cats = [f"{k} ({v})" for k, v in list(cats.items())[:5]]
+            summary_lines.append(f"  Top categories: {', '.join(top_cats)}")
+        sections.append(f"### Sentiment Summary{header_suffix}\n" + "\n".join(summary_lines))
+
+    # General market news (with inline scores when available)
     news_items = brief.get("news", [])[:10]
     if news_items:
         news_lines = []
         for n in news_items:
+            score = n.get("score")
+            prefix = f"[{score:+.2f}] " if score is not None else ""
             if n.get("summary"):
-                news_lines.append(f"  {n['headline']}\n    {n['summary'][:200]}")
+                news_lines.append(f"  {prefix}{n['headline']}\n    {n['summary'][:200]}")
             else:
-                news_lines.append(f"  {n['headline']}")
+                news_lines.append(f"  {prefix}{n['headline']}")
         sections.append(f"### Market News{header_suffix}\n" + "\n".join(news_lines))
 
-    # Company-specific news
+    # Company-specific news (with inline scores when available)
     company_news = brief.get("company_news", {})
     if company_news:
         news_lines = []
         for sym, articles in company_news.items():
             for a in articles:
+                score = a.get("score")
+                prefix = f"[{score:+.2f}] " if score is not None else ""
                 summary = f" — {a['summary']}" if a.get("summary") else ""
-                news_lines.append(f"  {sym}: {a['headline']}{summary}")
+                news_lines.append(f"  {sym}: {prefix}{a['headline']}{summary}")
         if news_lines:
             sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
 
@@ -374,6 +409,8 @@ def _format_sentiment(brief: dict, invert: bool = False) -> str:
             change = dod["spy_momentum_change"]
             direction = "accelerating" if change > 0 else "decelerating"
             dod_lines.append(f"  SPY momentum {direction} ({change:+.2f}% shift)")
+        if "sentiment_shift" in dod:
+            dod_lines.append(f"  {dod['sentiment_shift']}")
         if "sector_shifts" in dod:
             for shift in dod["sector_shifts"]:
                 dod_lines.append(f"  {shift}")

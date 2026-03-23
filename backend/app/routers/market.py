@@ -3,6 +3,7 @@ import asyncio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.services.market_brief import compile_market_brief, get_latest_brief
+from app.services.sentiment import get_sentiment_history
 from app.services.market_data import (
     get_quote,
     get_available_assets,
@@ -129,6 +130,28 @@ async def latest_brief():
     if not brief:
         raise HTTPException(status_code=404, detail="No market brief available")
     return brief
+
+
+@router.get("/sentiment")
+async def sentiment_today():
+    """Get today's headline sentiment aggregates from the latest brief."""
+    brief = await get_latest_brief()
+    if not brief:
+        raise HTTPException(status_code=404, detail="No market brief available")
+    scores = brief.get("sentiment_scores", {})
+    if not scores:
+        return {"message": "No sentiment scores available yet"}
+    return scores
+
+
+@router.get("/sentiment/history")
+async def sentiment_history(
+    symbol: str | None = Query(None, description="Filter by stock symbol"),
+    days: int = Query(30, ge=1, le=365),
+):
+    """Get daily sentiment trend from scored headlines."""
+    history = await get_sentiment_history(symbol=symbol, days=days)
+    return {"symbol": symbol, "days": days, "history": history}
 
 
 def _run_brief_sync():

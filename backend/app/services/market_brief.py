@@ -703,6 +703,15 @@ def _compute_day_over_day(current_brief: dict, previous_brief: dict) -> dict:
     if prev_spy_7d is not None and curr_spy_7d is not None:
         dod["spy_momentum_change"] = round(curr_spy_7d - prev_spy_7d, 2)
 
+    # Sentiment shift
+    curr_sent = current_brief.get("sentiment_scores", {}).get("market_sentiment")
+    prev_sent = previous_brief.get("sentiment_scores", {}).get("market_sentiment")
+    if curr_sent is not None and prev_sent is not None:
+        shift = round(curr_sent - prev_sent, 3)
+        if abs(shift) > 0.1:
+            direction = "more bullish" if shift > 0 else "more bearish"
+            dod["sentiment_shift"] = f"Market sentiment {direction} ({shift:+.3f})"
+
     return dod
 
 
@@ -788,7 +797,11 @@ async def compile_market_brief() -> dict:
     mover_symbols = [m["symbol"] for m in (movers_up[:3] + movers_down[:2])]
     company_news = await _fetch_company_news(settings.finnhub_api_key, mover_symbols)
 
-    # 9. Day-over-day context
+    # 9. Score headlines for sentiment (1 Groq API call)
+    from app.services.sentiment import score_headlines
+    _scored, sentiment_scores = await score_headlines(news, company_news)
+
+    # 10. Day-over-day context
     previous_brief = await _get_previous_brief()
     day_over_day = None  # Will be computed after brief is assembled
 
@@ -809,6 +822,7 @@ async def compile_market_brief() -> dict:
         "market_regime": market_regime,
         "sector_performance": sector_performance,
         "stock_volatility": stock_volatility,
+        "sentiment_scores": sentiment_scores,
     }
 
     # Compute day-over-day after regime/sectors are set
