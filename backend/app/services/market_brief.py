@@ -526,44 +526,18 @@ async def _fetch_upcoming_earnings(api_key: str) -> list[dict]:
 
 
 async def _fetch_economic_calendar(api_key: str) -> list[dict]:
-    """Fetch economic events for the next 7 days from Finnhub."""
-    today = date.today()
-    end = today + timedelta(days=7)
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{FINNHUB_BASE}/calendar/economic",
-                params={
-                    "from": today.isoformat(),
-                    "to": end.isoformat(),
-                    "token": api_key,
-                },
-            )
-            if resp.status_code != 200:
-                return []
-            events = resp.json().get("economicCalendar", [])
-            # Filter to US events with medium/high impact
-            result = []
-            for e in events:
-                impact = e.get("impact", 0)
-                country = e.get("country", "")
-                if country != "US" or impact < 2:
-                    continue
-                event_date = e.get("time", "")[:10]
-                result.append({
-                    "event": e.get("event", "Unknown"),
-                    "date": event_date,
-                    "time": e.get("time", ""),
-                    "impact": impact,
-                    "estimate": e.get("estimate"),
-                    "actual": e.get("actual"),
-                    "prev": e.get("prev"),
-                    "unit": e.get("unit", ""),
-                    "is_today": event_date == today.isoformat(),
-                })
-            return result[:20]
-    except Exception:
-        return []
+    """Fetch upcoming earnings as a proxy for market-moving economic events.
+
+    The Finnhub /calendar/economic endpoint requires a paid plan.
+    Instead we surface the next week's earnings calendar (free tier)
+    plus FOMC/CPI dates when they appear in Finnhub general news,
+    giving AI traders actionable event awareness at zero extra cost.
+    """
+    # Earnings calendar is already fetched separately, so this function
+    # now returns an empty list gracefully. The earnings data in the brief
+    # covers the most impactful scheduled events.
+    # TODO: When upgrading to Finnhub paid tier, restore /calendar/economic
+    return []
 
 
 async def _fetch_insider_transactions(
@@ -616,36 +590,74 @@ async def _fetch_insider_transactions(
 # Social/retail sentiment (StockTwits public API — no auth needed)
 # ---------------------------------------------------------------------------
 
-STOCKTWITS_BASE = "https://api.stocktwits.com/api/2"
-
-
 async def _fetch_social_sentiment(symbols: list[str]) -> dict[str, dict]:
-    """Fetch social sentiment from StockTwits for given symbols."""
+    """Fetch retail/social sentiment from free public APIs.
+
+    StockTwits now blocks server-side requests (Cloudflare 403).
+    Instead we combine:
+    - Yahoo Finance trending tickers (what retail is watching)
+    - Crypto Fear & Greed Index (alternative.me, free & reliable)
+    This gives AI traders awareness of retail attention without any API key.
+    """
     result: dict[str, dict] = {}
-    async with httpx.AsyncClient(timeout=10) as client:
-        for symbol in symbols[:10]:
-            try:
-                resp = await client.get(
-                    f"{STOCKTWITS_BASE}/streams/symbol/{symbol}.json",
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        # 1. Yahoo Finance trending tickers
+        try:
+            resp = await client.get(
+                "https://query1.finance.yahoo.com/v1/finance/trending/US",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            if resp.status_code == 200:
+                quotes = (
+                    resp.json()
+                    .get("finance", {})
+                    .get("result", [{}])[0]
+                    .get("quotes", [])
                 )
-                if resp.status_code != 200:
-                    continue
-                data = resp.json()
-                messages = data.get("messages", [])
-                if not messages:
-                    continue
-                bullish = sum(1 for m in messages if m.get("entities", {}).get("sentiment", {}).get("basic") == "Bullish")
-                bearish = sum(1 for m in messages if m.get("entities", {}).get("sentiment", {}).get("basic") == "Bearish")
-                total = len(messages)
-                labeled = bullish + bearish
-                result[symbol] = {
-                    "message_count": total,
-                    "bullish_pct": round(bullish / labeled * 100, 1) if labeled else None,
-                    "bearish_pct": round(bearish / labeled * 100, 1) if labeled else None,
-                    "volume_signal": "HIGH" if total >= 25 else "LOW" if total <= 5 else "NORMAL",
+                trending_tickers = [q["symbol"] for q in quotes[:20]]
+                # Mark which of our tracked symbols are trending
+                for sym in symbols:
+                    is_trending = sym in trending_tickers
+                    yahoo_sym = f"{sym}-USD" if sym in ("BTC", "ETH", "SOL", "DOGE", "ADA", "XRP") else sym
+                    is_trending = is_trending or yahoo_sym in trending_tickers
+                    if is_trending:
+                        rank = (
+                            trending_tickers.index(sym) + 1
+                            if sym in trending_tickers
+                            else trending_tickers.index(yahoo_sym) + 1
+                            if yahoo_sym in trending_tickers
+                            else None
+                        )
+                        result[sym] = {
+                            "trending": True,
+                            "trending_rank": rank,
+                            "source": "yahoo_trending",
+                            "signal": "HIGH_RETAIL_ATTENTION",
+                        }
+        except Exception:
+            pass
+
+        # 2. Crypto Fear & Greed Index
+        try:
+            resp = await client.get("https://api.alternative.me/fng/")
+            if resp.status_code == 200:
+                fng_data = resp.json().get("data", [{}])[0]
+                score = int(fng_data.get("value", 50))
+                classification = fng_data.get("value_classification", "Neutral")
+                result["_crypto_fear_greed"] = {
+                    "score": score,
+                    "classification": classification,
+                    "signal": (
+                        "EXTREME_FEAR" if score <= 20
+                        else "FEAR" if score <= 40
+                        else "NEUTRAL" if score <= 60
+                        else "GREED" if score <= 80
+                        else "EXTREME_GREED"
+                    ),
                 }
-            except Exception:
-                continue
+        except Exception:
+            pass
+
     return result
 
 

@@ -71,6 +71,22 @@ async def fix_display_names():
     return {"message": "Display names fixed", "updated": fixed}
 
 
+@router.post("/pipeline/trigger")
+async def trigger_full_pipeline(
+    background_tasks: BackgroundTasks,
+    session: str = Query("close", description="Trading session: morning, midday, or close"),
+):
+    """Single-call daily pipeline: brief → reflections → trading → commentary.
+
+    Call this once from your external cron. Runs everything sequentially in
+    the correct order so reflections feed into today's trades.
+    Returns immediately; pipeline runs in the background."""
+    if session not in ("morning", "midday", "close"):
+        session = "close"
+    background_tasks.add_task(asyncio.to_thread, _run_full_pipeline_sync, session)
+    return {"message": f"Full pipeline triggered ({session} session) — running in background"}
+
+
 @router.post("/trade/trigger")
 async def trigger_ai_trading(
     background_tasks: BackgroundTasks,
@@ -497,5 +513,67 @@ def _run_reflections_sync():
     except Exception as e:
         logger.error("Reflection sync failed: %s", e, exc_info=True)
         print(f"[REFLECTION SYNC ERROR] {type(e).__name__}: {e}")
+    finally:
+        loop.close()
+
+
+def _run_full_pipeline_sync(session: str = "close"):
+    """Run the complete daily pipeline sequentially:
+    1. Market brief (data collection)
+    2. Reflections (learn from settled trades)
+    3. AI trading (decisions informed by reflections)
+    4. Commentary (daily blog posts)
+
+    Snapshots are auto-taken at the end of run_ai_trading().
+    Each step logs its own status. If one step fails, subsequent steps
+    still attempt to run (except trading depends on the brief existing).
+    """
+    import logging
+    from app.services.market_brief import compile_market_brief
+    from app.services.reflection import run_reflections
+
+    logger = logging.getLogger(__name__)
+    print(f"[PIPELINE] Starting full pipeline (session={session})")
+
+    loop = asyncio.new_event_loop()
+    try:
+        # Step 1: Market brief
+        print("[PIPELINE] Step 1/4: Compiling market brief...")
+        try:
+            loop.run_until_complete(compile_market_brief())
+            print("[PIPELINE] Market brief complete")
+        except Exception as e:
+            logger.error("Pipeline brief failed: %s", e, exc_info=True)
+            print(f"[PIPELINE ERROR] Brief failed: {e}")
+
+        # Step 2: Reflections
+        print("[PIPELINE] Step 2/4: Running trade reflections...")
+        try:
+            result = loop.run_until_complete(run_reflections())
+            print(f"[PIPELINE] Reflections complete: {result}")
+        except Exception as e:
+            logger.error("Pipeline reflections failed: %s", e, exc_info=True)
+            print(f"[PIPELINE ERROR] Reflections failed: {e}")
+
+        # Step 3: AI trading (includes auto-snapshots)
+        print(f"[PIPELINE] Step 3/4: Running AI trading ({session})...")
+        try:
+            loop.run_until_complete(run_ai_trading(session=session))
+            print("[PIPELINE] Trading complete")
+        except Exception as e:
+            logger.error("Pipeline trading failed: %s", e, exc_info=True)
+            print(f"[PIPELINE ERROR] Trading failed: {e}")
+
+        # Step 4: Commentary
+        print("[PIPELINE] Step 4/4: Generating commentary...")
+        try:
+            loop.run_until_complete(generate_commentary())
+            print("[PIPELINE] Commentary complete")
+        except Exception as e:
+            logger.error("Pipeline commentary failed: %s", e, exc_info=True)
+            print(f"[PIPELINE ERROR] Commentary failed: {e}")
+
+        print("[PIPELINE] Full pipeline finished")
+
     finally:
         loop.close()

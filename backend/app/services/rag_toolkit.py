@@ -430,30 +430,36 @@ def _format_sentiment(brief: dict, invert: bool = False) -> str:
         if news_lines:
             sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
 
-    # Social/retail sentiment (StockTwits)
+    # Social/retail sentiment (Yahoo trending + Crypto Fear & Greed)
     social = brief.get("social_sentiment", {})
     if social:
         social_lines = []
-        news_sent = sent.get("by_symbol", {}) if sent else {}
-        for sym, s in social.items():
-            bull = s.get("bullish_pct")
-            if bull is None:
-                continue
-            bear = s.get("bearish_pct", 0)
-            vol = s.get("volume_signal", "NORMAL")
-            line = f"  {sym}: {bull:.0f}% bullish / {bear:.0f}% bearish (volume: {vol})"
-            # Compare with news sentiment if available
-            news_score = news_sent.get(sym, {}).get("score")
-            if news_score is not None:
-                news_dir = "bullish" if news_score > 0.1 else "bearish" if news_score < -0.1 else "neutral"
-                social_dir = "bullish" if bull > 60 else "bearish" if bear > 60 else "mixed"
-                if news_dir != social_dir and news_dir != "neutral" and social_dir != "mixed":
-                    line += f" << DIVERGENCE: news {news_dir} vs social {social_dir}"
-            social_lines.append(line)
+
+        # Crypto Fear & Greed Index
+        fng = social.get("_crypto_fear_greed", {})
+        if fng:
+            score = fng.get("score", 50)
+            label = fng.get("classification", "Neutral")
+            signal = fng.get("signal", "NEUTRAL")
+            social_lines.append(f"  Crypto Fear & Greed: {score}/100 ({label}) — {signal}")
+
+        # Trending tickers (high retail attention)
+        trending = [
+            (sym, s) for sym, s in social.items()
+            if sym != "_crypto_fear_greed" and s.get("trending")
+        ]
+        if trending:
+            trending_sorted = sorted(trending, key=lambda x: x[1].get("trending_rank", 99))
+            symbols_str = ", ".join(
+                f"{sym} (#{s['trending_rank']})" for sym, s in trending_sorted
+            )
+            social_lines.append(f"  Yahoo Trending: {symbols_str}")
+            social_lines.append("  HIGH_RETAIL_ATTENTION = crowded trade risk. Consider if the move is already priced in.")
+
         if social_lines:
-            header = "### Social/Retail Sentiment (StockTwits)"
+            header = "### Retail Sentiment & Attention"
             if invert:
-                header += "\nCONTRARIAN NOTE: High social bullishness = everyone already bought. Look for extremes."
+                header += "\nCONTRARIAN NOTE: When retail piles in, smart money often exits. Extreme fear = opportunity."
             sections.append(header + "\n" + "\n".join(social_lines))
 
     # Day-over-day shifts
