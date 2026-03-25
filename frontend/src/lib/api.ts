@@ -508,6 +508,67 @@ class ApiClient {
     }>(`/api/analytics/benchmark?days=${days}`);
   }
 
+  async getModuleAttribution(traderId?: string) {
+    const params = new URLSearchParams();
+    if (traderId) params.set("trader_id", traderId);
+    return this.request<{
+      modules: Record<string, {
+        label: string;
+        color: string;
+        sell_win_rate: number;
+        sell_trades: number;
+        sell_total_pnl: number;
+        buy_win_rate: number;
+        buy_trades: number;
+        buy_total_pnl: number;
+        combined_win_rate: number;
+        combined_pnl: number;
+      }>;
+      total_sells_analyzed: number;
+      total_buys_analyzed: number;
+    }>(`/api/analytics/modules?${params.toString()}`);
+  }
+
+  async getReflectionTrends(traderId?: string) {
+    const params = new URLSearchParams();
+    if (traderId) params.set("trader_id", traderId);
+    return this.request<{
+      trends: { week: string; avg_score: number; count: number; positive_pct: number }[];
+      by_trader: Record<string, {
+        display_name: string;
+        personality: string;
+        total_reflections: number;
+        avg_score: number;
+        positive_pct: number;
+        first_half_avg: number;
+        second_half_avg: number;
+        improving: boolean | null;
+      }>;
+      summary: {
+        total_reflections: number;
+        avg_outcome_score: number;
+        positive_pct: number;
+        traders_improving: number;
+        traders_with_data: number;
+      };
+    }>(`/api/analytics/reflections?${params.toString()}`);
+  }
+
+  async getRegimeAnalysis(days = 90) {
+    return this.request<{
+      period_days: number;
+      regimes: Record<string, number>;
+      current_regime: string;
+      traders: {
+        display_name: string;
+        model: string;
+        personality: string;
+        by_regime: Record<string, { trades: number; win_rate: number; total_pnl: number; avg_pnl: number }>;
+      }[];
+      by_personality: Record<string, Record<string, { trades: number; win_rate: number; total_pnl: number }>>;
+    }>(`/api/analytics/regimes?days=${days}`);
+  }
+
   async getEnhancementComparison() {
     return this.request<{
       enhancement_date: string;

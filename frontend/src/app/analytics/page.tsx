@@ -58,7 +58,7 @@ const SECTOR_COLORS: Record<string, string> = {
   Other: "#6b7280",
 };
 
-type Tab = "overview" | "benchmark" | "individual";
+type Tab = "overview" | "benchmark" | "individual" | "modules" | "regimes" | "reflections" | "enhancement";
 
 interface ComparisonData {
   traders: {
@@ -198,16 +198,20 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex mb-6">
+        <div className="flex mb-6 overflow-x-auto">
           {([
-            ["overview", "Model & Personality"],
-            ["benchmark", "vs SPY Benchmark"],
-            ["individual", "Trader Deep Dive"],
+            ["overview", "Overview"],
+            ["benchmark", "vs SPY"],
+            ["individual", "Deep Dive"],
+            ["modules", "Modules"],
+            ["regimes", "Regimes"],
+            ["reflections", "Reflections"],
+            ["enhancement", "Enhancement"],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`flex-1 py-2 text-center text-sm font-medium border-b-2 transition ${
+              className={`flex-1 min-w-[90px] py-2 text-center text-sm font-medium border-b-2 transition ${
                 tab === t
                   ? "border-blue-500 text-white"
                   : "border-transparent text-gray-400 hover:text-white"
@@ -232,6 +236,14 @@ export default function AnalyticsPage() {
             detail={traderDetail}
             loading={detailLoading}
           />
+        ) : tab === "modules" ? (
+          <ModulesTab />
+        ) : tab === "regimes" ? (
+          <RegimesTab />
+        ) : tab === "reflections" ? (
+          <ReflectionsTab />
+        ) : tab === "enhancement" ? (
+          <EnhancementTab />
         ) : null}
       </main>
     </div>
@@ -837,6 +849,541 @@ function BenchmarkTab({ data }: { data: any }) {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modules Tab
+// ---------------------------------------------------------------------------
+
+const MODULE_BG: Record<string, string> = {
+  technicals: "bg-blue-900/40",
+  fundamentals: "bg-purple-900/40",
+  sentiment: "bg-green-900/40",
+  macro: "bg-amber-900/40",
+  momentum: "bg-red-900/40",
+  optimizer: "bg-teal-900/40",
+  memory: "bg-indigo-900/40",
+};
+
+function ModulesTab() {
+  const [data, setData] = useState<{
+    modules: Record<string, {
+      label: string; color: string;
+      sell_win_rate: number; sell_trades: number; sell_total_pnl: number;
+      buy_win_rate: number; buy_trades: number; buy_total_pnl: number;
+      combined_win_rate: number; combined_pnl: number;
+    }>;
+    total_sells_analyzed: number;
+    total_buys_analyzed: number;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getModuleAttribution()
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text-gray-400">Loading module attribution...</p>;
+  if (error) return <p className="text-red-400">Error: {error}</p>;
+  if (!data || Object.keys(data.modules).length === 0) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center">
+        <p className="text-gray-400">No module attribution data yet. AI traders need sell trades to generate this analysis.</p>
+      </div>
+    );
+  }
+
+  const modules = Object.entries(data.modules);
+  const maxPnl = Math.max(...modules.map(([, m]) => Math.abs(m.combined_pnl)), 1);
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        <h2 className="text-lg font-semibold text-white mb-1">Module Attribution</h2>
+        <p className="text-sm text-gray-400 mb-4">
+          Which data modules correlate with winning trades? Based on {data.total_sells_analyzed} sells and {data.total_buys_analyzed} buys.
+        </p>
+
+        <div className="space-y-3">
+          {modules.map(([key, m]) => {
+            const pnlPct = maxPnl > 0 ? (Math.abs(m.combined_pnl) / maxPnl) * 100 : 0;
+            const isPositive = m.combined_pnl >= 0;
+            return (
+              <div key={key} className={`rounded-lg border border-gray-800 p-4 ${MODULE_BG[key] || "bg-gray-800/40"}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-white font-medium">{m.label}</span>
+                  <span className={`text-sm font-bold ${isPositive ? "text-green-400" : "text-red-400"}`}>
+                    {formatCurrency(m.combined_pnl)}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-800 rounded-full overflow-hidden mb-2">
+                  <div
+                    className={`h-full rounded-full ${isPositive ? "bg-green-500" : "bg-red-500"}`}
+                    style={{ width: `${pnlPct}%` }}
+                  />
+                </div>
+                <div className="flex gap-6 text-xs text-gray-400">
+                  <span>Win Rate: <span className="text-white">{m.combined_win_rate}%</span></span>
+                  <span>Buy WR: <span className="text-white">{m.buy_win_rate}%</span> ({m.buy_trades})</span>
+                  <span>Sell WR: <span className="text-white">{m.sell_win_rate}%</span> ({m.sell_trades})</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Regimes Tab
+// ---------------------------------------------------------------------------
+
+const REGIME_COLORS: Record<string, string> = {
+  BULL: "text-green-400",
+  BEAR: "text-red-400",
+  HIGH_VOL: "text-amber-400",
+  SIDEWAYS: "text-gray-400",
+};
+
+const REGIME_BG: Record<string, string> = {
+  BULL: "bg-green-900/30",
+  BEAR: "bg-red-900/30",
+  HIGH_VOL: "bg-amber-900/30",
+  SIDEWAYS: "bg-gray-800/30",
+};
+
+function RegimesTab() {
+  const [data, setData] = useState<{
+    period_days: number;
+    regimes: Record<string, number>;
+    current_regime: string;
+    traders: {
+      display_name: string; model: string; personality: string;
+      by_regime: Record<string, { trades: number; win_rate: number; total_pnl: number; avg_pnl: number }>;
+    }[];
+    by_personality: Record<string, Record<string, { trades: number; win_rate: number; total_pnl: number }>>;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState(90);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getRegimeAnalysis(days)
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [days]);
+
+  if (loading) return <p className="text-gray-400">Loading regime analysis...</p>;
+  if (error) return <p className="text-red-400">Error: {error}</p>;
+  if (!data || data.traders?.length === 0) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center">
+        <p className="text-gray-400">Not enough trading data for regime analysis yet.</p>
+      </div>
+    );
+  }
+
+  const regimeOrder = ["BULL", "BEAR", "HIGH_VOL", "SIDEWAYS"];
+  const totalDays = Object.values(data.regimes).reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="space-y-6">
+      {/* Period selector */}
+      <div className="flex items-center gap-3">
+        <select
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="bg-gray-900 border border-gray-800 text-white text-sm rounded-lg px-3 py-2"
+        >
+          <option value={30}>Last 30 days</option>
+          <option value={60}>Last 60 days</option>
+          <option value={90}>Last 90 days</option>
+          <option value={180}>Last 180 days</option>
+        </select>
+        <span className={`text-sm font-medium px-3 py-1 rounded ${REGIME_BG[data.current_regime]} ${REGIME_COLORS[data.current_regime]}`}>
+          Current: {data.current_regime}
+        </span>
+      </div>
+
+      {/* Regime Distribution */}
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        <h2 className="text-lg font-semibold text-white mb-4">Market Regime Distribution</h2>
+        <div className="flex h-6 rounded-full overflow-hidden mb-3">
+          {regimeOrder.map((r) => {
+            const count = data.regimes[r] || 0;
+            const pct = totalDays > 0 ? (count / totalDays) * 100 : 0;
+            if (pct === 0) return null;
+            const bgMap: Record<string, string> = { BULL: "bg-green-500", BEAR: "bg-red-500", HIGH_VOL: "bg-amber-500", SIDEWAYS: "bg-gray-500" };
+            return <div key={r} className={bgMap[r]} style={{ width: `${pct}%` }} title={`${r}: ${count} days (${pct.toFixed(0)}%)`} />;
+          })}
+        </div>
+        <div className="flex flex-wrap gap-4">
+          {regimeOrder.map((r) => {
+            const count = data.regimes[r] || 0;
+            return (
+              <div key={r} className="flex items-center gap-2 text-sm">
+                <span className={`w-3 h-3 rounded-sm ${REGIME_BG[r]}`} />
+                <span className={REGIME_COLORS[r]}>{r}</span>
+                <span className="text-gray-500">{count}d ({totalDays > 0 ? ((count / totalDays) * 100).toFixed(0) : 0}%)</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* By Personality */}
+      {data.by_personality && Object.keys(data.by_personality).length > 0 && (
+        <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">Personality Performance by Regime</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-400 border-b border-gray-800">
+                  <th className="px-4 py-2">Personality</th>
+                  {regimeOrder.map((r) => (
+                    <th key={r} className={`px-4 py-2 text-center ${REGIME_COLORS[r]}`}>{r}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(data.by_personality).map(([pers, regimes]) => (
+                  <tr key={pers} className="border-b border-gray-800/50">
+                    <td className="px-4 py-3">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ backgroundColor: PERSONALITY_COLORS[pers] }} />
+                      <span className="text-white">{PERSONALITY_LABELS[pers] || pers}</span>
+                    </td>
+                    {regimeOrder.map((r) => {
+                      const rs = regimes[r];
+                      if (!rs) return <td key={r} className="px-4 py-3 text-center text-gray-600">—</td>;
+                      return (
+                        <td key={r} className="px-4 py-3 text-center">
+                          <span className={rs.total_pnl >= 0 ? "text-green-400" : "text-red-400"}>
+                            {rs.win_rate}% WR
+                          </span>
+                          <br />
+                          <span className="text-xs text-gray-500">{formatCurrency(rs.total_pnl)} ({rs.trades}t)</span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Individual Traders */}
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        <h2 className="text-lg font-semibold text-white mb-4">Individual Trader Regime Performance</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-400 border-b border-gray-800">
+                <th className="px-4 py-2">Trader</th>
+                <th className="px-4 py-2">Model</th>
+                {regimeOrder.map((r) => (
+                  <th key={r} className={`px-4 py-2 text-center ${REGIME_COLORS[r]}`}>{r}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.traders.map((t) => (
+                <tr key={t.display_name} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                  <td className="px-4 py-3">
+                    <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ backgroundColor: PERSONALITY_COLORS[t.personality] }} />
+                    <span className="text-white">{t.display_name}</span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-400">{t.model}</td>
+                  {regimeOrder.map((r) => {
+                    const rs = t.by_regime[r];
+                    if (!rs) return <td key={r} className="px-4 py-3 text-center text-gray-600">—</td>;
+                    return (
+                      <td key={r} className="px-4 py-3 text-center">
+                        <span className={rs.total_pnl >= 0 ? "text-green-400" : "text-red-400"}>
+                          {rs.win_rate}%
+                        </span>
+                        <br />
+                        <span className="text-xs text-gray-500">{formatCurrency(rs.total_pnl)}</span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reflections Tab
+// ---------------------------------------------------------------------------
+
+function ReflectionsTab() {
+  const [data, setData] = useState<{
+    trends: { week: string; avg_score: number; count: number; positive_pct: number }[];
+    by_trader: Record<string, {
+      display_name: string; personality: string;
+      total_reflections: number; avg_score: number; positive_pct: number;
+      first_half_avg: number; second_half_avg: number; improving: boolean | null;
+    }>;
+    summary: {
+      total_reflections: number; avg_outcome_score: number; positive_pct: number;
+      traders_improving: number; traders_with_data: number;
+    };
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getReflectionTrends()
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text-gray-400">Loading reflection trends...</p>;
+  if (error) return <p className="text-red-400">Error: {error}</p>;
+  if (!data || data.summary.total_reflections === 0) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center">
+        <p className="text-gray-400">No reflections yet. The AI needs settled trades (3-5 days old, &gt;3% move) to generate reflections.</p>
+      </div>
+    );
+  }
+
+  const s = data.summary;
+  const scoreColor = (v: number) => v > 0 ? "text-green-400" : v < 0 ? "text-red-400" : "text-gray-400";
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard label="Total Reflections" value={String(s.total_reflections)} />
+        <StatCard
+          label="Avg Outcome Score"
+          value={s.avg_outcome_score.toFixed(3)}
+          color={scoreColor(s.avg_outcome_score)}
+        />
+        <StatCard
+          label="Positive Outcomes"
+          value={`${s.positive_pct}%`}
+          color={s.positive_pct >= 50 ? "text-green-400" : "text-red-400"}
+        />
+        <StatCard
+          label="Traders Improving"
+          value={`${s.traders_improving} / ${s.traders_with_data}`}
+          color={s.traders_improving > s.traders_with_data / 2 ? "text-green-400" : "text-amber-400"}
+        />
+      </div>
+
+      {/* Weekly Trend */}
+      {data.trends.length > 1 && (
+        <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">Weekly Outcome Trend</h2>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={data.trends} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+              <XAxis
+                dataKey="week"
+                tick={{ fill: "#9ca3af", fontSize: 11 }}
+                tickLine={false}
+                axisLine={{ stroke: "#374151" }}
+              />
+              <YAxis
+                tick={{ fill: "#9ca3af", fontSize: 12 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#1f2937", border: "1px solid #374151", borderRadius: "8px", color: "#fff" }}
+                formatter={(value: unknown) => [Number(value).toFixed(3), "Avg Score"]}
+              />
+              <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />
+              <Bar dataKey="avg_score" radius={[4, 4, 0, 0]}>
+                {data.trends.map((t, i) => (
+                  <Cell key={i} fill={t.avg_score >= 0 ? "#22c55e" : "#ef4444"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Per-Trader Learning */}
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        <h2 className="text-lg font-semibold text-white mb-4">Per-Trader Learning Progress</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-400 border-b border-gray-800">
+                <th className="px-4 py-2">Trader</th>
+                <th className="px-4 py-2 text-right">Reflections</th>
+                <th className="px-4 py-2 text-right">Avg Score</th>
+                <th className="px-4 py-2 text-right">Positive %</th>
+                <th className="px-4 py-2 text-right">1st Half</th>
+                <th className="px-4 py-2 text-right">2nd Half</th>
+                <th className="px-4 py-2 text-center">Improving?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.values(data.by_trader)
+                .sort((a, b) => b.avg_score - a.avg_score)
+                .map((t) => (
+                  <tr key={t.display_name} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                    <td className="px-4 py-3">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ backgroundColor: PERSONALITY_COLORS[t.personality] }} />
+                      <span className="text-white">{t.display_name}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-300">{t.total_reflections}</td>
+                    <td className={`px-4 py-3 text-right font-medium ${scoreColor(t.avg_score)}`}>
+                      {t.avg_score.toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-300">{t.positive_pct}%</td>
+                    <td className={`px-4 py-3 text-right ${scoreColor(t.first_half_avg)}`}>
+                      {t.first_half_avg.toFixed(3)}
+                    </td>
+                    <td className={`px-4 py-3 text-right ${scoreColor(t.second_half_avg)}`}>
+                      {t.second_half_avg.toFixed(3)}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {t.improving === null ? (
+                        <span className="text-gray-600">—</span>
+                      ) : t.improving ? (
+                        <span className="text-green-400 font-bold">YES</span>
+                      ) : (
+                        <span className="text-red-400">NO</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Enhancement Tab
+// ---------------------------------------------------------------------------
+
+function EnhancementTab() {
+  const [data, setData] = useState<{
+    enhancement_date: string;
+    traders: {
+      display_name: string; model: string; personality: string;
+      pre_enhancement: { days: number; total_return_pct: number; daily_return_avg: number; start_value: number; end_value: number };
+      post_enhancement: { days: number; total_return_pct: number; daily_return_avg: number; start_value: number; end_value: number };
+      improved: boolean | null;
+    }[];
+    summary: { total_traders: number; with_both_periods: number; improved: number; not_improved: number };
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getEnhancementComparison()
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text-gray-400">Loading enhancement comparison...</p>;
+  if (error) return <p className="text-red-400">Error: {error}</p>;
+  if (!data || data.traders.length === 0) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center">
+        <p className="text-gray-400">Not enough data to compare pre/post enhancement performance yet.</p>
+      </div>
+    );
+  }
+
+  const es = data.summary;
+  const returnColor = (v: number) => v >= 0 ? "text-green-400" : "text-red-400";
+
+  return (
+    <div className="space-y-6">
+      {/* Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard label="Enhancement Date" value={data.enhancement_date} />
+        <StatCard label="Traders Analyzed" value={`${es.with_both_periods} / ${es.total_traders}`} />
+        <StatCard
+          label="Improved"
+          value={String(es.improved)}
+          color={es.improved > es.not_improved ? "text-green-400" : "text-amber-400"}
+        />
+        <StatCard
+          label="Not Improved"
+          value={String(es.not_improved)}
+          color="text-red-400"
+        />
+      </div>
+
+      {/* Per-Trader Comparison */}
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        <h2 className="text-lg font-semibold text-white mb-4">Pre vs Post Enhancement</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-400 border-b border-gray-800">
+                <th className="px-4 py-2">Trader</th>
+                <th className="px-4 py-2">Model</th>
+                <th className="px-4 py-2 text-right">Pre Return</th>
+                <th className="px-4 py-2 text-right">Pre Daily Avg</th>
+                <th className="px-4 py-2 text-right">Post Return</th>
+                <th className="px-4 py-2 text-right">Post Daily Avg</th>
+                <th className="px-4 py-2 text-center">Improved?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.traders
+                .filter((t) => t.improved !== null)
+                .sort((a, b) => (b.post_enhancement.daily_return_avg - b.pre_enhancement.daily_return_avg) - (a.post_enhancement.daily_return_avg - a.pre_enhancement.daily_return_avg))
+                .map((t) => (
+                  <tr key={t.display_name} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                    <td className="px-4 py-3">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ backgroundColor: PERSONALITY_COLORS[t.personality] }} />
+                      <span className="text-white">{t.display_name}</span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-400">{t.model}</td>
+                    <td className={`px-4 py-3 text-right ${returnColor(t.pre_enhancement.total_return_pct)}`}>
+                      {t.pre_enhancement.total_return_pct > 0 ? "+" : ""}{t.pre_enhancement.total_return_pct.toFixed(2)}%
+                    </td>
+                    <td className={`px-4 py-3 text-right ${returnColor(t.pre_enhancement.daily_return_avg)}`}>
+                      {t.pre_enhancement.daily_return_avg > 0 ? "+" : ""}{t.pre_enhancement.daily_return_avg.toFixed(4)}%
+                    </td>
+                    <td className={`px-4 py-3 text-right ${returnColor(t.post_enhancement.total_return_pct)}`}>
+                      {t.post_enhancement.total_return_pct > 0 ? "+" : ""}{t.post_enhancement.total_return_pct.toFixed(2)}%
+                    </td>
+                    <td className={`px-4 py-3 text-right ${returnColor(t.post_enhancement.daily_return_avg)}`}>
+                      {t.post_enhancement.daily_return_avg > 0 ? "+" : ""}{t.post_enhancement.daily_return_avg.toFixed(4)}%
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {t.improved ? (
+                        <span className="text-green-400 font-bold">YES</span>
+                      ) : (
+                        <span className="text-red-400">NO</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
