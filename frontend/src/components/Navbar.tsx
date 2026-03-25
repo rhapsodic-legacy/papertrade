@@ -18,6 +18,7 @@ const NAV_LINKS = [
 const AI_LINKS = [
   { href: "/insights", label: "AI Insights", desc: "Daily AI commentary" },
   { href: "/analytics", label: "AI Analytics", desc: "Model & personality performance" },
+  { href: "/reasoning", label: "AI Reasoning", desc: "Why AIs make each trade" },
   { href: "/learn", label: "Learn from AI", desc: "Study AI trade reasoning" },
   { href: "/how-it-works", label: "How It Works", desc: "Trading basics & platform guide" },
 ];

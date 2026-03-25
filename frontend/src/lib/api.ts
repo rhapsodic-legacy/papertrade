@@ -596,6 +596,54 @@ class ApiClient {
     }>(`/api/ai/trades/feed?${params.toString()}`);
   }
 
+  // Trade Reasoning Viewer
+  async getTradeReasoning(filters?: {
+    days?: number;
+    trader_id?: string;
+    symbol?: string;
+  }) {
+    const params = new URLSearchParams();
+    if (filters?.days) params.set("days", String(filters.days));
+    if (filters?.trader_id) params.set("trader_id", filters.trader_id);
+    if (filters?.symbol) params.set("symbol", filters.symbol);
+    return this.request<{
+      days: number;
+      total_trades: number;
+      dates: Record<
+        string,
+        {
+          trader: string;
+          model: string;
+          symbol: string;
+          asset_type: string;
+          side: string;
+          quantity: number;
+          price: number;
+          total: number;
+          reasoning: string;
+          modules_used: string[];
+          time: string;
+        }[]
+      >;
+      convergence_alerts: {
+        date: string;
+        symbol: string;
+        side: string;
+        traders: string[];
+        count: number;
+        warning: string;
+      }[];
+      trader_summaries: Record<
+        string,
+        {
+          model: string;
+          trades: number;
+          top_modules: [string, number][];
+        }
+      >;
+    }>(`/api/analytics/reasoning?${params.toString()}`);
+  }
+
   // Portfolio Health
   async getPortfolioHealth() {
     return this.request<{
