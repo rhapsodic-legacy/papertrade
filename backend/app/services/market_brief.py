@@ -677,6 +677,7 @@ async def _fetch_crypto_market_data() -> dict[str, dict]:
                     "ids": ids,
                     "order": "market_cap_desc",
                     "sparkline": "false",
+                    "price_change_percentage": "7d,14d,30d",
                 },
             )
             if resp.status_code != 200:

@@ -529,6 +529,10 @@ def _format_momentum(brief: dict) -> str:
                 val = c.get(key)
                 if val is not None:
                     momentum_parts.append(f"{period}: {val:+.1f}%")
+            mcap_chg = c.get("market_cap_change_24h")
+            if mcap_chg is not None:
+                flow = "INFLOW" if mcap_chg > 3 else "OUTFLOW" if mcap_chg < -3 else "FLAT"
+                momentum_parts.append(f"MCap 24h: {mcap_chg:+.1f}% ({flow})")
             vol_mcap = c.get("volume_to_mcap")
             if vol_mcap is not None:
                 activity = "HIGH" if vol_mcap > 15 else "LOW" if vol_mcap < 3 else "NORMAL"
