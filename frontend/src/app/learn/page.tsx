@@ -25,7 +25,7 @@ const PERSONALITY_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  gemini: "Gemini",
+  gemini: "Llama 8B/GPT-OSS",
   mistral: "Mistral",
   groq: "Groq",
 };

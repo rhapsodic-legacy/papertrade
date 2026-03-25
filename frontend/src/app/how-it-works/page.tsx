@@ -506,16 +506,16 @@ function PersonalitiesContent() {
 function ModelsContent() {
   const models = [
     {
-      name: "Gemini Flash",
-      provider: "Google",
-      desc: "Fast and cost-efficient. Optimized for quick decisions. Good at following instructions precisely.",
-      tradeoff: "Speed over depth. May miss subtle signals in complex market conditions.",
+      name: "Llama 3.1 8B",
+      provider: "Groq",
+      desc: "Meta's lightweight model optimized for speed. Fast inference on Groq hardware with solid instruction following.",
+      tradeoff: "Smaller parameter count means less depth on complex multi-factor analysis, but fastest response times.",
     },
     {
-      name: "Gemini Pro",
-      provider: "Google",
-      desc: "Google's most capable reasoning model. Thinks deeper about complex market dynamics and multi-factor decisions.",
-      tradeoff: "Slower and more expensive, but potentially better at synthesizing contradictory signals.",
+      name: "GPT-OSS 120B",
+      provider: "Groq",
+      desc: "Large open-source model with strong reasoning capabilities. 120B parameters for deeper market analysis.",
+      tradeoff: "Larger model may be slower, but brings different reasoning patterns compared to Meta's Llama family.",
     },
     {
       name: "Mistral Large",

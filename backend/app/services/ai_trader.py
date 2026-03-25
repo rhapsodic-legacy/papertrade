@@ -165,16 +165,20 @@ PERSONALITIES = {
 }
 
 # Model configurations
+# NOTE: Gemini models disabled (spending cap hit). Swapped to free Groq-hosted
+# alternatives. Original Gemini config preserved for re-enablement:
+#   "gemini-flash": {"label": "Gemini Flash", "api": "gemini", "model_id": "gemini-2.5-flash"},
+#   "gemini-pro": {"label": "Gemini Pro", "api": "gemini", "model_id": "gemini-2.5-pro"},
 MODELS = {
     "gemini-flash": {
-        "label": "Gemini Flash",
-        "api": "gemini",
-        "model_id": "gemini-2.5-flash",
+        "label": "Llama 3.1 8B",
+        "api": "groq",
+        "model_id": "llama-3.1-8b-instant",
     },
     "gemini-pro": {
-        "label": "Gemini Pro",
-        "api": "gemini",
-        "model_id": "gemini-2.5-pro",
+        "label": "GPT-OSS 120B",
+        "api": "groq",
+        "model_id": "openai/gpt-oss-120b",
     },
     "mistral": {
         "label": "Mistral",
@@ -841,8 +845,8 @@ def _format_peer_comparison(
         current_pnl = current_metrics.get("total_pnl", 0)
 
         # Determine who's outperforming
-        peer_label = peer_model.replace("llama", "Groq").replace("gemini-flash", "Gemini Flash").replace("gemini-pro", "Gemini Pro").replace("mistral", "Mistral")
-        you_label = current_model.replace("llama", "Groq").replace("gemini-flash", "Gemini Flash").replace("gemini-pro", "Gemini Pro").replace("mistral", "Mistral")
+        peer_label = peer_model.replace("llama", "Groq").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
+        you_label = current_model.replace("llama", "Groq").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
 
         header = (
             f"### PEER INTELLIGENCE: {peer_label} counterpart\n"
@@ -1306,11 +1310,13 @@ async def _execute_ai_trade(user_id: str, trade: dict, active_modules: set[str] 
 
 # Provider-specific rate limit delays (seconds between calls).
 # These are tuned for free tier limits:
-#   Gemini Pro: 2 RPM → 35s   |  Gemini Flash: 15 RPM → 5s
-#   Mistral: generous → 3s    |  Groq: generous → 3s
+#   gemini-flash (Llama 3.1 8B on Groq): 3s  |  gemini-pro (GPT-OSS 120B on Groq): 3s
+#   Mistral: generous → 3s                 |  Groq (Llama): generous → 3s
+# NOTE: When Gemini is re-enabled, restore original delays:
+#   Gemini Pro: 2 RPM → 35s  |  Gemini Flash: 15 RPM → 5s
 PROVIDER_DELAYS = {
-    "gemini-pro": 35,
-    "gemini-flash": 5,
+    "gemini-pro": 3,
+    "gemini-flash": 3,
     "mistral": 3,
     "llama": 3,
 }
@@ -1510,11 +1516,10 @@ async def _run_provider_batch(
 async def run_ai_trading(session: str = "close") -> dict:
     """Run all AI traders for today, grouped by API provider for optimal speed.
 
-    Old approach: 20 traders × 35s = ~12 min (one-size-fits-all delay).
-    New approach: group by provider, use provider-specific delays, run
-    Mistral and Groq in parallel with each other (different APIs).
-
-    Estimated time: ~4 min (dominated by 5 Gemini Pro calls × 35s).
+    Groups traders by model key and runs batches with provider-specific delays.
+    Currently all models use Groq/Mistral APIs (~3s delay each).
+    NOTE: When Gemini is re-enabled, restore the phased scheduling
+    (Gemini Pro at 35s delay was the bottleneck).
     """
     print(f"[PIPELINE START] AI trading session={session}")
     brief = await get_latest_brief()
@@ -1570,16 +1575,15 @@ async def run_ai_trading(session: str = "close") -> dict:
         model_key = profile.get("ai_model", "unknown")
         by_model.setdefault(model_key, []).append(profile)
 
-    # Run Gemini Pro first (slowest — 35s between calls, bottleneck)
-    # Then run Gemini Flash (same API, different rate limit — must be sequential with Pro)
-    # Meanwhile, Mistral and Groq use different APIs and can run in parallel
+    # NOTE: gemini-flash and gemini-pro keys are now routed to Groq.
+    # When Gemini is re-enabled, restore sequential phasing for its API.
     all_results = []
 
-    # Phase 1: Gemini calls (must be sequential — same API key)
+    # Pop gemini-keyed models (run sequentially for historical reasons / future Gemini re-enable)
     gemini_pro = by_model.pop("gemini-pro", [])
     gemini_flash = by_model.pop("gemini-flash", [])
 
-    # Phase 2: Non-Gemini calls (can run in parallel with each other)
+    # Remaining models run in parallel batches
     non_gemini_batches = []
     for model_key, profiles in by_model.items():
         delay = PROVIDER_DELAYS.get(model_key, 5)

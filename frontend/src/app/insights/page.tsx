@@ -57,8 +57,8 @@ const PERSONALITY_LABELS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  "gemini-flash": "Gemini Flash",
-  "gemini-pro": "Gemini Pro",
+  "gemini-flash": "Llama 3.1 8B",
+  "gemini-pro": "GPT-OSS 120B",
   mistral: "Mistral",
   llama: "Groq",
   groq: "Groq",

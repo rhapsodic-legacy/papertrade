@@ -17,8 +17,8 @@ TRADING_DAYS_PER_YEAR = 252
 
 # Map internal model keys to display labels
 MODEL_DISPLAY_LABELS = {
-    "gemini-flash": "Gemini Flash",
-    "gemini-pro": "Gemini Pro",
+    "gemini-flash": "Llama 3.1 8B",
+    "gemini-pro": "GPT-OSS 120B",
     "mistral": "Mistral",
     "llama": "Groq",
 }
