@@ -430,6 +430,20 @@ def _format_sentiment(brief: dict, invert: bool = False) -> str:
         if news_lines:
             sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
 
+    # Crypto trending coins (what's getting attention right now)
+    crypto_trending = brief.get("crypto_trending", [])
+    if crypto_trending:
+        ct_lines = []
+        for t in crypto_trending:
+            chg = t.get("price_change_24h")
+            chg_str = f" {chg:+.1f}%" if chg is not None else ""
+            rank = f" (Rank #{t['market_cap_rank']})" if t.get("market_cap_rank") else ""
+            ct_lines.append(f"  {t['symbol']} ({t['name']}){rank}{chg_str}")
+        header = "### Crypto Trending (highest search/social attention right now)"
+        if invert:
+            header += "\n  CONTRARIAN NOTE: Trending = crowded. When everyone is watching a coin, the easy gains are often over."
+        sections.append(header + "\n" + "\n".join(ct_lines))
+
     # Social/retail sentiment (Yahoo trending + Crypto Fear & Greed)
     social = brief.get("social_sentiment", {})
     if social:
@@ -543,6 +557,19 @@ def _format_momentum(brief: dict) -> str:
         if crypto_lines:
             sections.append("### Crypto Market Data\n" + "\n".join(crypto_lines))
 
+    # Crypto sector/category rotation (like stock sectors but for crypto)
+    crypto_cats = brief.get("crypto_categories", [])
+    if crypto_cats:
+        cat_lines = []
+        for cat in crypto_cats:
+            chg = cat.get("change_24h", 0)
+            signal = "HOT" if chg > 5 else "COLD" if chg < -5 else ""
+            signal_str = f" — {signal}" if signal else ""
+            cat_lines.append(
+                f"  {cat['name']}: {chg:+.1f}% 24h, ${cat['market_cap_b']}B MCap{signal_str}"
+            )
+        sections.append("### Crypto Sector Rotation (category performance)\n" + "\n".join(cat_lines))
+
     return "\n\n".join(sections)
 
 
@@ -588,6 +615,28 @@ def _format_macro(brief: dict) -> str:
                 f"  {sector}: {data['avg_change_pct']:+.2f}% avg ({data['stocks_up']} up / {data['stocks_down']} down)"
             )
         sections.append("### SECTOR PERFORMANCE (today's rotation)\n" + "\n".join(sector_lines))
+
+    # Crypto global market context (BTC dominance, total market cap)
+    crypto_global = brief.get("crypto_global", {})
+    if crypto_global:
+        cg_lines = []
+        if crypto_global.get("total_market_cap_t"):
+            cg_lines.append(f"  Total Crypto Market Cap: ${crypto_global['total_market_cap_t']}T")
+        if crypto_global.get("total_volume_24h_b"):
+            cg_lines.append(f"  24h Volume: ${crypto_global['total_volume_24h_b']}B")
+        btc_dom = crypto_global.get("btc_dominance")
+        if btc_dom is not None:
+            alt_signal = "ALT SEASON RISK" if btc_dom < 40 else "BTC DOMINANT — alts underperform" if btc_dom > 55 else "BALANCED"
+            cg_lines.append(f"  BTC Dominance: {btc_dom}% ({alt_signal})")
+        eth_dom = crypto_global.get("eth_dominance")
+        if eth_dom is not None:
+            cg_lines.append(f"  ETH Dominance: {eth_dom}%")
+        mcap_chg = crypto_global.get("market_cap_change_24h")
+        if mcap_chg is not None:
+            flow = "INFLOW" if mcap_chg > 2 else "OUTFLOW" if mcap_chg < -2 else "FLAT"
+            cg_lines.append(f"  Market Cap 24h Change: {mcap_chg:+.2f}% ({flow})")
+        if cg_lines:
+            sections.append("### CRYPTO MARKET OVERVIEW\n" + "\n".join(cg_lines))
 
     # Economic calendar (upcoming macro events)
     econ = brief.get("economic_calendar", [])

@@ -80,7 +80,7 @@ export default function LandingPage() {
         </h1>
         <p className="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto mb-10">
           Start with $100,000 in virtual cash. Trade real stocks and crypto at
-          live prices. Compete against 10 AI traders powered by Mistral and Groq.
+          live prices. Compete against 20 AI traders powered by Mistral and Groq.
         </p>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <Link

@@ -714,6 +714,85 @@ async def _fetch_crypto_market_data() -> dict[str, dict]:
         return {}
 
 
+async def _fetch_crypto_global() -> dict:
+    """Fetch global crypto market stats: BTC/ETH dominance, total market cap, volume."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{COINGECKO_BASE}/global")
+            if resp.status_code != 200:
+                return {}
+            data = resp.json().get("data", {})
+            return {
+                "total_market_cap_t": round(data.get("total_market_cap", {}).get("usd", 0) / 1e12, 2),
+                "total_volume_24h_b": round(data.get("total_volume", {}).get("usd", 0) / 1e9, 1),
+                "btc_dominance": round(data.get("market_cap_percentage", {}).get("btc", 0), 1),
+                "eth_dominance": round(data.get("market_cap_percentage", {}).get("eth", 0), 1),
+                "active_cryptos": data.get("active_cryptocurrencies", 0),
+                "market_cap_change_24h": round(data.get("market_cap_change_percentage_24h_usd", 0), 2),
+            }
+    except Exception:
+        return {}
+
+
+async def _fetch_crypto_categories() -> list[dict]:
+    """Fetch top crypto categories (Layer-1, DeFi, Meme, etc.) with market data."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{COINGECKO_BASE}/coins/categories",
+                params={"order": "market_cap_desc"},
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            categories = []
+            for cat in data[:12]:
+                name = cat.get("name", "")
+                if not name:
+                    continue
+                market_cap = cat.get("market_cap", 0) or 0
+                vol_24h = cat.get("volume_24h", 0) or 0
+                change_24h = cat.get("market_cap_change_24h", 0) or 0
+                top_coins = cat.get("top_3_coins", [])
+                categories.append({
+                    "name": name,
+                    "market_cap_b": round(market_cap / 1e9, 1) if market_cap else 0,
+                    "volume_24h_b": round(vol_24h / 1e9, 1) if vol_24h else 0,
+                    "change_24h": round(change_24h, 2),
+                    "top_coins_count": len(top_coins),
+                })
+            return categories
+    except Exception:
+        return []
+
+
+async def _fetch_crypto_trending() -> list[dict]:
+    """Fetch trending crypto coins from CoinGecko (what's getting attention right now)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{COINGECKO_BASE}/search/trending")
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            coins = data.get("coins", [])
+            trending = []
+            for c in coins[:10]:
+                item = c.get("item", {})
+                price_data = item.get("data", {})
+                price_chg = price_data.get("price_change_percentage_24h", {})
+                chg_24h = price_chg.get("usd") if isinstance(price_chg, dict) else price_chg
+                trending.append({
+                    "symbol": item.get("symbol", ""),
+                    "name": item.get("name", ""),
+                    "market_cap_rank": item.get("market_cap_rank"),
+                    "price_change_24h": round(chg_24h, 2) if chg_24h else None,
+                    "score": item.get("score", 0),
+                })
+            return trending
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Stock technicals (derived from candle data we already fetch)
 # ---------------------------------------------------------------------------
@@ -925,12 +1004,15 @@ async def compile_market_brief() -> dict:
     # Social sentiment uses StockTwits (separate API) — safe to run in parallel
     social_symbols = [m["symbol"] for m in (movers_up[:5] + movers_down[:5])]
 
-    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment = (
+    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending = (
         await asyncio.gather(
             _finnhub_enrichment(),
             _compute_stock_technicals(top_symbols),
             _fetch_crypto_market_data(),
             _fetch_social_sentiment(social_symbols),
+            _fetch_crypto_global(),
+            _fetch_crypto_categories(),
+            _fetch_crypto_trending(),
         )
     )
 
@@ -976,6 +1058,9 @@ async def compile_market_brief() -> dict:
         "economic_calendar": economic_calendar,
         "insider_transactions": insider_transactions,
         "social_sentiment": social_sentiment,
+        "crypto_global": crypto_global,
+        "crypto_categories": crypto_categories,
+        "crypto_trending": crypto_trending,
     }
 
     # Compute day-over-day after regime/sectors are set
