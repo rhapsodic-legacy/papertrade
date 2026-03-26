@@ -29,7 +29,15 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <footer className="w-full border-t border-zinc-800 mt-12 py-6 px-4 text-center text-xs text-zinc-500">
+            <p>
+              PaperTrade is an educational tool for learning about investing with virtual money.
+              Nothing on this site constitutes financial advice. All trades are simulated; no real money is involved.
+            </p>
+          </footer>
+        </Providers>
       </body>
     </html>
   );

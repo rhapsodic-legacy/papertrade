@@ -27,7 +27,7 @@ const PERSONALITY_COLORS: Record<string, string> = {
 const MODEL_LABELS: Record<string, string> = {
   gemini: "Llama 8B/GPT-OSS",
   mistral: "Mistral",
-  groq: "Groq",
+  groq: "Llama 3.3 70B",
 };
 
 type ModuleTag = {

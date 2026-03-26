@@ -20,7 +20,7 @@ MODEL_DISPLAY_LABELS = {
     "gemini-flash": "Llama 3.1 8B",
     "gemini-pro": "GPT-OSS 120B",
     "mistral": "Mistral",
-    "llama": "Groq",
+    "llama": "Llama 3.3 70B",
 }
 
 
@@ -29,8 +29,14 @@ def _model_label(key: str) -> str:
 
 
 def _clean_display_name(name: str) -> str:
-    """Replace legacy model names in display names (e.g. 'Vanilla (Llama)' -> 'Vanilla (Groq)')."""
-    return name.replace("Llama", "Groq").replace("llama", "Groq").replace("GPT", "Groq")
+    """Replace legacy model names in display names with current model labels."""
+    import re
+    # Replace exact legacy names, avoiding partial matches (e.g. "Llama 3.1 8B" should stay)
+    name = re.sub(r'\(Llama\)', '(Llama 3.3 70B)', name)
+    name = re.sub(r'\(llama\)', '(Llama 3.3 70B)', name)
+    name = re.sub(r'\(Groq\)', '(Llama 3.3 70B)', name)
+    name = re.sub(r'\(GPT\)', '(GPT-OSS 120B)', name)
+    return name
 
 
 async def get_trader_analytics(trader_id: str) -> dict:

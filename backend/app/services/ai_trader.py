@@ -186,7 +186,7 @@ MODELS = {
         "model_id": "mistral-large-latest",
     },
     "llama": {
-        "label": "Groq",
+        "label": "Llama 3.3 70B",
         "api": "groq",
         "model_id": "llama-3.3-70b-versatile",
     },
@@ -845,8 +845,8 @@ def _format_peer_comparison(
         current_pnl = current_metrics.get("total_pnl", 0)
 
         # Determine who's outperforming
-        peer_label = peer_model.replace("llama", "Groq").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
-        you_label = current_model.replace("llama", "Groq").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
+        peer_label = peer_model.replace("llama", "Llama 3.3 70B").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
+        you_label = current_model.replace("llama", "Llama 3.3 70B").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
 
         header = (
             f"### PEER INTELLIGENCE: {peer_label} counterpart\n"

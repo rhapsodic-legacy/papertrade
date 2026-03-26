@@ -43,7 +43,7 @@ const MODEL_COLORS: Record<string, string> = {
   "Llama 3.1 8B": "#34d399",
   "GPT-OSS 120B": "#3b82f6",
   Mistral: "#f59e0b",
-  Groq: "#8b5cf6",
+  "Llama 3.3 70B": "#8b5cf6",
 };
 
 const SECTOR_COLORS: Record<string, string> = {

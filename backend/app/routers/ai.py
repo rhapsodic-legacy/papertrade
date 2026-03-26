@@ -46,12 +46,12 @@ async def setup_ai_traders():
 
 @router.post("/fix-display-names")
 async def fix_display_names():
-    """One-time: rename legacy model names (Llama/GPT) to 'Groq' in all DB display_name fields."""
+    """One-time: rename legacy model names to current labels in all DB display_name fields."""
     db = get_supabase_admin()
     fixed = {"profiles": 0, "ai_commentary": 0}
 
-    # Fix profiles table — match Llama or GPT
-    for pattern in ["%Llama%", "%GPT%"]:
+    # Fix profiles table — match legacy names
+    for pattern in ["%Llama%", "%GPT%", "%Groq%"]:
         profiles = db.table("profiles").select("id, display_name").like("display_name", pattern).execute()
         for p in profiles.data:
             new_name = _clean_display_name(p["display_name"])
@@ -60,7 +60,7 @@ async def fix_display_names():
                 fixed["profiles"] += 1
 
     # Fix ai_commentary table
-    for pattern in ["%Llama%", "%GPT%"]:
+    for pattern in ["%Llama%", "%GPT%", "%Groq%"]:
         commentary = db.table("ai_commentary").select("id, display_name").like("display_name", pattern).execute()
         for c in commentary.data:
             new_name = _clean_display_name(c["display_name"])
