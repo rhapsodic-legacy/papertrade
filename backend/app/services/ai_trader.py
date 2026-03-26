@@ -42,7 +42,8 @@ PERSONALITIES = {
             {"module": "macro", "weight": 9},
             {"module": "technicals", "weight": 8},
             {"module": "fundamentals", "weight": 7},
-            {"module": "sentiment", "weight": 6},
+            {"module": "optimizer", "weight": 6},
+            {"module": "sentiment", "weight": 5},
         ],
     },
     "steady_eddie": {
@@ -101,6 +102,7 @@ PERSONALITIES = {
             {"module": "technicals", "weight": 9},
             {"module": "patterns", "weight": 8},
             {"module": "sentiment", "weight": 7},
+            {"module": "optimizer", "weight": 5},
         ],
     },
     "contrarian_carl": {
@@ -131,6 +133,7 @@ PERSONALITIES = {
             {"module": "fundamentals", "weight": 8},
             {"module": "patterns", "weight": 7},
             {"module": "macro", "weight": 6},
+            {"module": "optimizer", "weight": 5},
         ],
     },
     "crypto_chad": {
@@ -160,6 +163,7 @@ PERSONALITIES = {
             {"module": "technicals", "weight": 9},
             {"module": "patterns", "weight": 8},
             {"module": "sentiment", "weight": 6},
+            {"module": "optimizer", "weight": 5},
         ],
     },
 }

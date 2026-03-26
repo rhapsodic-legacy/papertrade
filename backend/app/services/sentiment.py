@@ -246,6 +246,104 @@ async def score_headlines(
         return [], {}
 
 
+NARRATIVE_SYSTEM = (
+    "You are a neutral market analyst writing a factual briefing. "
+    "Your job is to explain WHAT is happening and the historical cause-effect relationships, "
+    "NOT to recommend any action. Never say 'buy', 'sell', 'consider', 'avoid', or 'opportunity'. "
+    "Never frame events as positive or negative for a portfolio. "
+    "State facts and causal chains only. Let the reader draw their own conclusions. "
+    "Write 3-5 concise bullet points. No fluff, no opinions, no recommendations."
+)
+
+
+async def generate_market_narrative(
+    scored_headlines: list[dict],
+    crypto_trending: list[dict] | None = None,
+    market_regime: dict | None = None,
+) -> str:
+    """Generate a causal narrative explaining WHY today's headlines matter.
+
+    Uses a single Groq call to produce 3-5 bullet points connecting news
+    to expected market impact. Returns empty string on failure.
+    """
+    settings = get_settings()
+    if not settings.groq_api_key or not scored_headlines:
+        return ""
+
+    # Build context: top headlines sorted by absolute impact
+    top = sorted(scored_headlines, key=lambda h: abs(h.get("score", 0)), reverse=True)[:15]
+    headlines_text = "\n".join(
+        f"- [{h['score']:+.2f}] {h['headline']}"
+        + (f" ({h['symbol']})" if h.get("symbol") else "")
+        for h in top
+    )
+
+    # Add market context
+    context_parts = []
+    if market_regime:
+        trend = market_regime.get("market_trend", "unknown")
+        context_parts.append(f"Market regime: {trend}")
+        rate = market_regime.get("rate_signal")
+        if rate:
+            context_parts.append(f"Rate signal: {rate}")
+        haven = market_regime.get("safe_haven_demand")
+        if haven:
+            context_parts.append(f"Safe haven demand: {haven}")
+
+    if crypto_trending:
+        names = ", ".join(t.get("name", t.get("symbol", "?")) for t in crypto_trending[:5])
+        context_parts.append(f"Crypto trending: {names}")
+
+    context_str = "\n".join(context_parts) if context_parts else "No additional context."
+
+    prompt = (
+        f"Today's scored headlines (score: -1 bearish to +1 bullish):\n{headlines_text}\n\n"
+        f"Current conditions:\n{context_str}\n\n"
+        "Write 3-5 FACTUAL bullet points covering:\n"
+        "1. What are the key themes in today's news?\n"
+        "2. What cause-effect relationships exist? (e.g. 'Rate cuts have historically "
+        "correlated with growth stock outperformance' NOT 'buy growth stocks')\n"
+        "3. Any cross-market linkages (e.g. 'USD weakness historically correlates with "
+        "crypto strength')\n\n"
+        "RULES:\n"
+        "- State facts and historical patterns ONLY\n"
+        "- NEVER recommend actions (no 'buy', 'sell', 'consider', 'opportunity', 'benefits')\n"
+        "- NEVER say an event is 'good for' or 'bad for' any asset\n"
+        "- Use neutral language: 'X historically correlates with Y' not 'X will cause Y'\n"
+        "- Format: bullet points starting with '-'. Reference specific tickers where relevant."
+    )
+
+    try:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": NARRATIVE_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1024,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if resp.status_code != 200:
+                print(f"[NARRATIVE] Groq error {resp.status_code}: {resp.text[:300]}")
+                return ""
+            narrative = resp.json()["choices"][0]["message"]["content"].strip()
+            print(f"[NARRATIVE] Generated market narrative ({len(narrative)} chars)")
+            return narrative
+    except Exception as e:
+        print(f"[NARRATIVE] Failed: {e}")
+        return ""
+
+
 async def get_sentiment_history(
     symbol: str | None = None, days: int = 30
 ) -> list[dict]:

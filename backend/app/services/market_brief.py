@@ -1030,8 +1030,15 @@ async def compile_market_brief() -> dict:
     company_news = await _fetch_company_news(settings.finnhub_api_key, mover_symbols)
 
     # 9. Score headlines for sentiment (1 Groq API call)
-    from app.services.sentiment import score_headlines
+    from app.services.sentiment import score_headlines, generate_market_narrative
     _scored, sentiment_scores = await score_headlines(news, company_news)
+
+    # 9b. Generate causal narrative explaining WHY headlines matter (+1 Groq call)
+    market_narrative = await generate_market_narrative(
+        _scored,
+        crypto_trending=crypto_trending,
+        market_regime=market_regime,
+    )
 
     # 10. Day-over-day context
     previous_brief = await _get_previous_brief()
@@ -1058,6 +1065,7 @@ async def compile_market_brief() -> dict:
         "economic_calendar": economic_calendar,
         "insider_transactions": insider_transactions,
         "social_sentiment": social_sentiment,
+        "market_narrative": market_narrative,
         "crypto_global": crypto_global,
         "crypto_categories": crypto_categories,
         "crypto_trending": crypto_trending,
