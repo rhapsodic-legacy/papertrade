@@ -169,6 +169,44 @@ class ApiClient {
     }>("/api/market/status");
   }
 
+  async getMarketRegime() {
+    return this.request<{
+      date: string | null;
+      regime?: {
+        market_trend?: string;
+        spy_rsi?: number;
+        spy_7d?: number;
+        spy_30d?: number;
+        growth_vs_value?: string;
+        qqq_spy_spread_7d?: number;
+        rate_signal?: string;
+        tlt_7d?: number;
+        safe_haven_demand?: string;
+        gld_7d?: number;
+        small_cap_signal?: string;
+        iwm_7d?: number;
+      };
+      sectors?: {
+        sector: string;
+        avg_change_pct: number;
+        stocks_up: number;
+        stocks_down: number;
+      }[];
+      crypto_global?: {
+        total_market_cap_t?: number;
+        btc_dominance?: number;
+        eth_dominance?: number;
+        market_cap_change_24h?: number;
+      };
+      fear_greed?: {
+        score?: number;
+        classification?: string;
+        signal?: string;
+      };
+      day_over_day?: Record<string, unknown>;
+    }>("/api/market/regime");
+  }
+
   async getAssetDetails(assetType: string, symbol: string) {
     return this.request<{
       symbol: string;
@@ -309,6 +347,22 @@ class ApiClient {
       }),
     });
   }
+  async preTradeRiskCheck(symbol: string, assetType: string, side: string, quantity: number) {
+    return this.request<{
+      warnings: {
+        type: string;
+        severity: string;
+        message: string;
+      }[];
+      info: string[];
+      trade_value: number;
+      price: number;
+    }>("/api/portfolio/risk-check", {
+      method: "POST",
+      body: JSON.stringify({ symbol, asset_type: assetType, side, quantity }),
+    });
+  }
+
   // Watchlist
   async getWatchlist() {
     return this.request<
@@ -320,6 +374,12 @@ class ApiClient {
         change: number | null;
         change_pct: number | null;
         name: string;
+        signal_label?: string | null;
+        signal_score?: number | null;
+        rsi?: number | null;
+        momentum_7d?: number | null;
+        momentum_30d?: number | null;
+        earnings_date?: string | null;
       }[]
     >("/api/watchlist/");
   }

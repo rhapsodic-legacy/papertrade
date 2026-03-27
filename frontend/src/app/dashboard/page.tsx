@@ -16,6 +16,34 @@ import {
   ReferenceLine,
 } from "recharts";
 
+interface MarketRegime {
+  date: string | null;
+  regime?: {
+    market_trend?: string;
+    spy_rsi?: number;
+    spy_7d?: number;
+    spy_30d?: number;
+    growth_vs_value?: string;
+    rate_signal?: string;
+    safe_haven_demand?: string;
+    small_cap_signal?: string;
+  };
+  sectors?: {
+    sector: string;
+    avg_change_pct: number;
+    stocks_up: number;
+    stocks_down: number;
+  }[];
+  crypto_global?: {
+    btc_dominance?: number;
+    market_cap_change_24h?: number;
+  };
+  fear_greed?: {
+    score?: number;
+    classification?: string;
+  };
+}
+
 interface Snapshot {
   snapshot_date: string;
   total_value: number;
@@ -48,6 +76,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [regime, setRegime] = useState<MarketRegime | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -58,10 +87,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
-      Promise.all([api.getPortfolio(), api.getSnapshots(30)])
-        .then(([p, s]) => {
+      Promise.all([
+        api.getPortfolio(),
+        api.getSnapshots(30),
+        api.getMarketRegime().catch(() => null),
+      ])
+        .then(([p, s, r]) => {
           setPortfolio(p);
           setSnapshots(s);
+          setRegime(r);
         })
         .catch(console.error)
         .finally(() => setLoading(false));
@@ -119,6 +153,92 @@ export default function DashboardPage() {
                 </p>
               </div>
             </div>
+
+            {/* Market Conditions */}
+            {regime?.regime && (
+              <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 mb-8">
+                <h2 className="text-lg font-semibold text-white mb-4">
+                  Market Conditions
+                  {regime.date && (
+                    <span className="text-sm font-normal text-gray-500 ml-2">
+                      {regime.date}
+                    </span>
+                  )}
+                </h2>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  {regime.regime.market_trend && (
+                    <RegimeCard
+                      label="Market Trend"
+                      value={regime.regime.market_trend}
+                      detail={regime.regime.spy_7d != null ? `SPY 7d: ${regime.regime.spy_7d > 0 ? "+" : ""}${regime.regime.spy_7d.toFixed(1)}%` : undefined}
+                      color={regime.regime.market_trend === "BULLISH" ? "green" : regime.regime.market_trend === "BEARISH" ? "red" : "yellow"}
+                    />
+                  )}
+                  {regime.regime.growth_vs_value && (
+                    <RegimeCard
+                      label="Rotation"
+                      value={regime.regime.growth_vs_value.replace(/_/g, " ")}
+                      color="blue"
+                    />
+                  )}
+                  {regime.regime.rate_signal && (
+                    <RegimeCard
+                      label="Rates"
+                      value={regime.regime.rate_signal.replace(/_/g, " ")}
+                      color={regime.regime.rate_signal === "RATES_FALLING" ? "green" : "red"}
+                    />
+                  )}
+                  {regime.regime.safe_haven_demand && (
+                    <RegimeCard
+                      label="Safe Haven"
+                      value={regime.regime.safe_haven_demand}
+                      color={regime.regime.safe_haven_demand === "HIGH" ? "red" : "green"}
+                    />
+                  )}
+                  {regime.fear_greed && (
+                    <RegimeCard
+                      label="Fear & Greed"
+                      value={`${regime.fear_greed.score ?? "—"}/100`}
+                      detail={regime.fear_greed.classification}
+                      color={(regime.fear_greed.score ?? 50) < 30 ? "red" : (regime.fear_greed.score ?? 50) > 70 ? "green" : "yellow"}
+                    />
+                  )}
+                  {regime.crypto_global?.btc_dominance != null && (
+                    <RegimeCard
+                      label="BTC Dominance"
+                      value={`${regime.crypto_global.btc_dominance}%`}
+                      color="blue"
+                    />
+                  )}
+                </div>
+
+                {/* Sector Performance Bar */}
+                {regime.sectors && regime.sectors.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-800">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+                      Sector Performance
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {regime.sectors.map((s) => (
+                        <span
+                          key={s.sector}
+                          className={`text-xs px-2 py-1 rounded ${
+                            s.avg_change_pct > 0.5
+                              ? "bg-green-900/30 text-green-400"
+                              : s.avg_change_pct < -0.5
+                                ? "bg-red-900/30 text-red-400"
+                                : "bg-gray-800 text-gray-400"
+                          }`}
+                        >
+                          {s.sector} {s.avg_change_pct > 0 ? "+" : ""}
+                          {s.avg_change_pct.toFixed(1)}%
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Portfolio Chart */}
             {snapshots.length > 1 && (
@@ -206,6 +326,32 @@ export default function DashboardPage() {
           <p className="text-red-400">Failed to load portfolio</p>
         )}
       </main>
+    </div>
+  );
+}
+
+function RegimeCard({
+  label,
+  value,
+  detail,
+  color,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  color: "green" | "red" | "yellow" | "blue";
+}) {
+  const colors = {
+    green: "border-green-800/50 text-green-400",
+    red: "border-red-800/50 text-red-400",
+    yellow: "border-yellow-800/50 text-yellow-400",
+    blue: "border-blue-800/50 text-blue-400",
+  };
+  return (
+    <div className={`bg-gray-800/50 rounded-lg border px-3 py-2 ${colors[color]}`}>
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-sm font-semibold">{value}</p>
+      {detail && <p className="text-xs text-gray-400">{detail}</p>}
     </div>
   );
 }

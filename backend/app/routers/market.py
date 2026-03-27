@@ -115,6 +115,57 @@ async def asset_details(asset_type: str, symbol: str):
     return result
 
 
+@router.get("/regime")
+async def market_regime():
+    """Get current market regime data for the human dashboard.
+    Returns regime signals, Fear & Greed, BTC dominance, sector rotation.
+    Zero additional API cost — pulls from latest brief."""
+    brief = await get_latest_brief()
+    if not brief:
+        raise HTTPException(status_code=404, detail="No market brief available")
+
+    result: dict = {}
+
+    # Market regime (SPY/QQQ/TLT/GLD/IWM trends)
+    regime = brief.get("market_regime", {})
+    if regime:
+        result["regime"] = regime
+
+    # Sector performance
+    sector_perf = brief.get("sector_performance", {})
+    if sector_perf:
+        sorted_sectors = sorted(
+            sector_perf.items(),
+            key=lambda x: x[1]["avg_change_pct"],
+            reverse=True,
+        )
+        result["sectors"] = [
+            {"sector": s, **data} for s, data in sorted_sectors
+        ]
+
+    # Crypto global stats
+    crypto_global = brief.get("crypto_global", {})
+    if crypto_global:
+        result["crypto_global"] = crypto_global
+
+    # Fear & Greed
+    social = brief.get("social_sentiment", {})
+    if social:
+        fng = social.get("_crypto_fear_greed", {})
+        if fng:
+            result["fear_greed"] = fng
+
+    # Day-over-day changes
+    dod = brief.get("day_over_day", {})
+    if dod:
+        result["day_over_day"] = dod
+
+    # Brief date
+    result["date"] = brief.get("date", None)
+
+    return result
+
+
 @router.post("/brief/trigger")
 async def trigger_brief(background_tasks: BackgroundTasks):
     """Compile today's market brief. Call daily via cron before AI trading.

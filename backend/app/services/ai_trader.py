@@ -1009,10 +1009,11 @@ def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _compute_portfolio_risk(portfolio: dict, personality_key: str = None) -> str:
+def _compute_portfolio_risk(portfolio: dict, personality_key: str = None, brief: dict | None = None) -> str:
     """Compute portfolio risk metrics: sector exposure, concentration, unrealized P&L.
     This gives AIs the self-awareness to manage risk like a professional.
-    When personality_key is provided, includes risk rule alerts."""
+    When personality_key is provided, includes risk rule alerts.
+    When brief is provided, includes ATR-based stop suggestions and earnings warnings."""
     positions = portfolio.get("positions", [])
     cash = portfolio.get("cash", 0)
 
@@ -1076,6 +1077,19 @@ def _compute_portfolio_risk(portfolio: dict, personality_key: str = None) -> str
                     f"Consider selling to free up capital (max hold: {max_days} days)."
                 )
 
+        # Position aging pressure — progressive warnings before max_hold_days
+        if risk_params and hold_days > 0 and "STALE" not in flags:
+            max_days = risk_params.get("max_hold_days", 30)
+            days_remaining = max_days - hold_days
+            if days_remaining <= 5 and days_remaining > 0 and abs(pnl) < 5:
+                flags.append("EXPIRING SOON")
+                sell_alerts.append(
+                    f"⏳ {sym}: only {days_remaining} days left before max hold ({max_days}d) "
+                    f"with {pnl:+.1f}% return. Decide NOW: has your thesis played out?"
+                )
+            elif hold_days > max_days * 0.6 and abs(pnl) < 3:
+                flags.append("AGING")
+
         flag_str = f" ⚠ {', '.join(flags)}" if flags else ""
         age_str = f", held {hold_days}d" if hold_days > 0 else ""
         lines.append(f"  {sym} ({atype}): {pct}% of portfolio, P&L {pnl:+.1f}%{age_str}{flag_str}")
@@ -1119,6 +1133,67 @@ def _compute_portfolio_risk(portfolio: dict, personality_key: str = None) -> str
             "Ignoring risk alerts violates your trading mandate."
         )
 
+    # --- ATR-based dynamic stop suggestions ---
+    if brief:
+        stock_tech = brief.get("stock_technicals", {})
+        crypto_tech = brief.get("crypto_technicals", {})
+        all_tech = {**stock_tech, **crypto_tech}
+
+        atr_lines = []
+        for p in positions:
+            sym = p["symbol"]
+            t = all_tech.get(sym, {})
+            atr = t.get("atr_14")
+            if atr and p["current_price"] > 0:
+                atr_pct = (atr / p["current_price"]) * 100
+                suggested_stop = round(atr_pct * 2, 1)  # 2x ATR stop
+                suggested_tp = round(atr_pct * 3, 1)    # 3x ATR target
+                vol_label = "volatile" if atr_pct > 3 else "stable" if atr_pct < 1.5 else "moderate"
+                atr_lines.append(
+                    f"  {sym}: ATR ${atr:.2f} ({atr_pct:.1f}% of price, {vol_label}) "
+                    f"→ suggested stop: -{suggested_stop}%, target: +{suggested_tp}%"
+                )
+        if atr_lines:
+            lines.append("\n### ATR-BASED RISK SIZING (volatility-adjusted stops)")
+            lines.append("Use these to set smarter stops — volatile assets need wider stops to avoid whipsaws:")
+            lines.extend(atr_lines)
+
+    # --- Earnings calendar warnings for held positions ---
+    if brief:
+        earnings = brief.get("earnings_calendar", [])
+        if earnings:
+            earning_syms = {e["symbol"]: e for e in earnings}
+            earnings_warnings = []
+            for p in positions:
+                e = earning_syms.get(p["symbol"])
+                if e:
+                    eps_str = f", est EPS ${e['estimate_eps']:.2f}" if e.get("estimate_eps") else ""
+                    earnings_warnings.append(
+                        f"  ⚡ {p['symbol']} reports earnings {e['date']}{eps_str} — "
+                        f"expect high volatility. You're holding {p.get('quantity', 0)} shares. "
+                        f"Decide: take profits before, hold through, or reduce size."
+                    )
+            if earnings_warnings:
+                lines.append("\n### EARNINGS EVENT RISK (positions with upcoming reports)")
+                lines.extend(earnings_warnings)
+
+    # --- Position aging summary ---
+    aging_positions = [
+        (sym, hold_days, pnl)
+        for sym, pct, pnl, atype, hold_days in position_pcts
+        if risk_params and hold_days > risk_params.get("max_hold_days", 30) * 0.6 and abs(pnl) < 3
+    ]
+    if aging_positions:
+        lines.append("\n### POSITION AGING SUMMARY")
+        lines.append("These positions have been held a long time with minimal return. Capital may be better deployed elsewhere:")
+        for sym, days, pnl in aging_positions:
+            max_days = risk_params.get("max_hold_days", 30) if risk_params else 30
+            lines.append(
+                f"  {sym}: {days}d held, {pnl:+.1f}% return "
+                f"(max hold: {max_days}d, {max_days - days}d remaining). "
+                f"Original thesis still valid?"
+            )
+
     return "\n".join(lines)
 
 
@@ -1128,8 +1203,8 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
     personality = PERSONALITIES[personality_key]
     model_cfg = MODELS[model_key]
 
-    # Portfolio risk analysis (with personality-specific risk alerts)
-    risk_analysis = _compute_portfolio_risk(portfolio, personality_key)
+    # Portfolio risk analysis (with personality-specific risk alerts + ATR stops + earnings)
+    risk_analysis = _compute_portfolio_risk(portfolio, personality_key, brief=brief)
     risk_params = personality.get("risk_params", {})
 
     # Build the user message via modular toolkit

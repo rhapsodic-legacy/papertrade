@@ -84,7 +84,7 @@ GROQ_API_KEY is required for reflections and Llama-based traders.
 - `trade_reflections` — post-trade analysis with outcome scores and lessons
 
 ## Development Notes
-- Run backend locally: `cd backend && uvicorn app.main:app --reload`
+- Run backend locally: `cd backend && uvicorn app.main:app --reload --port 8001`
 - Python command is `python3` on macOS (not `python`)
 - LLM API keys default to empty string if unset — traders silently skip
 - When replacing strings across codebase, always do exhaustive search first

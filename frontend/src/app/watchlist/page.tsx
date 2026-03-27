@@ -15,6 +15,12 @@ interface WatchlistItem {
   change: number | null;
   change_pct: number | null;
   name: string;
+  signal_label?: string | null;
+  signal_score?: number | null;
+  rsi?: number | null;
+  momentum_7d?: number | null;
+  momentum_30d?: number | null;
+  earnings_date?: string | null;
 }
 
 interface AssetOption {
@@ -161,9 +167,12 @@ export default function WatchlistPage() {
                   <tr className="text-left text-sm text-gray-400 border-b border-gray-800">
                     <th className="px-6 py-3">Symbol</th>
                     <th className="px-6 py-3">Name</th>
-                    <th className="px-6 py-3">Type</th>
                     <th className="px-6 py-3 text-right">Price</th>
                     <th className="px-6 py-3 text-right">Change</th>
+                    <th className="px-6 py-3 text-center">Signal</th>
+                    <th className="px-6 py-3 text-right">RSI</th>
+                    <th className="px-6 py-3 text-right">7D</th>
+                    <th className="px-6 py-3 text-right">30D</th>
                     <th className="px-6 py-3 text-right"></th>
                   </tr>
                 </thead>
@@ -174,12 +183,19 @@ export default function WatchlistPage() {
                       className="border-b border-gray-800/50 hover:bg-gray-800/30"
                     >
                       <td className="px-6 py-4 font-medium text-white">
-                        {item.symbol}
+                        <span
+                          className="cursor-pointer hover:text-blue-400 transition"
+                          onClick={() => router.push(`/trade?symbol=${item.symbol}&type=${item.asset_type}`)}
+                        >
+                          {item.symbol}
+                        </span>
+                        {item.earnings_date && (
+                          <span className="ml-2 text-xs bg-amber-900/30 text-amber-400 border border-amber-700/30 rounded px-1.5 py-0.5">
+                            Earnings {item.earnings_date}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-6 py-4 text-gray-300">{item.name}</td>
-                      <td className="px-6 py-4 text-gray-400 capitalize">
-                        {item.asset_type}
-                      </td>
+                      <td className="px-6 py-4 text-gray-300 text-sm">{item.name}</td>
                       <td className="px-6 py-4 text-right text-gray-300">
                         {item.price !== null ? formatPrice(item.price) : "-"}
                       </td>
@@ -191,6 +207,58 @@ export default function WatchlistPage() {
                         {item.change_pct !== null
                           ? `${item.change_pct > 0 ? "+" : ""}${item.change_pct.toFixed(2)}%`
                           : "-"}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {item.signal_label ? (
+                          <span
+                            className={`text-xs font-medium px-2 py-1 rounded ${
+                              item.signal_label === "BUY" || item.signal_label === "STRONG_BUY"
+                                ? "bg-green-900/30 text-green-400"
+                                : item.signal_label === "SELL" || item.signal_label === "STRONG_SELL"
+                                  ? "bg-red-900/30 text-red-400"
+                                  : "bg-gray-800 text-gray-400"
+                            }`}
+                          >
+                            {item.signal_label}
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm">
+                        {item.rsi != null ? (
+                          <span
+                            className={
+                              item.rsi > 70
+                                ? "text-red-400"
+                                : item.rsi < 30
+                                  ? "text-green-400"
+                                  : "text-gray-300"
+                            }
+                          >
+                            {item.rsi.toFixed(0)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
+                      </td>
+                      <td
+                        className={`px-6 py-4 text-right text-sm font-medium ${pnlColor(
+                          item.momentum_7d ?? 0
+                        )}`}
+                      >
+                        {item.momentum_7d != null
+                          ? `${item.momentum_7d > 0 ? "+" : ""}${item.momentum_7d.toFixed(1)}%`
+                          : "—"}
+                      </td>
+                      <td
+                        className={`px-6 py-4 text-right text-sm font-medium ${pnlColor(
+                          item.momentum_30d ?? 0
+                        )}`}
+                      >
+                        {item.momentum_30d != null
+                          ? `${item.momentum_30d > 0 ? "+" : ""}${item.momentum_30d.toFixed(1)}%`
+                          : "—"}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button

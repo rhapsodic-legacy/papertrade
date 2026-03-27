@@ -4,6 +4,7 @@ from typing import Literal
 
 from app.services.auth import get_user_id_from_token
 from app.services.market_data import get_quote, TOP_STOCKS, CRYPTO_MAP
+from app.services.market_brief import get_latest_brief
 from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
@@ -27,20 +28,43 @@ async def get_watchlist(request: Request):
         .execute()
     )
 
+    # Load latest brief for technical signals (zero API cost)
+    brief = await get_latest_brief()
+    stock_tech = brief.get("stock_technicals", {}) if brief else {}
+    crypto_tech = brief.get("crypto_technicals", {}) if brief else {}
+    earnings_list = brief.get("earnings_calendar", []) if brief else []
+    earnings_map = {e["symbol"]: e for e in earnings_list}
+
     items = []
     for entry in resp.data:
-        quote = await get_quote(entry["symbol"], entry["asset_type"])
-        items.append(
-            {
-                "id": entry["id"],
-                "symbol": entry["symbol"],
-                "asset_type": entry["asset_type"],
-                "price": quote["price"] if quote else None,
-                "change": quote["change"] if quote else None,
-                "change_pct": quote["change_pct"] if quote else None,
-                "name": quote["name"] if quote else entry["symbol"],
-            }
-        )
+        symbol = entry["symbol"]
+        quote = await get_quote(symbol, entry["asset_type"])
+
+        item: dict = {
+            "id": entry["id"],
+            "symbol": symbol,
+            "asset_type": entry["asset_type"],
+            "price": quote["price"] if quote else None,
+            "change": quote["change"] if quote else None,
+            "change_pct": quote["change_pct"] if quote else None,
+            "name": quote["name"] if quote else symbol,
+        }
+
+        # Enrich with technical signals
+        tech = stock_tech.get(symbol) or crypto_tech.get(symbol)
+        if tech:
+            signal = tech.get("signal", {})
+            item["signal_label"] = signal.get("label")
+            item["signal_score"] = signal.get("score")
+            item["rsi"] = tech.get("rsi_14")
+            item["momentum_7d"] = tech.get("7d_return")
+            item["momentum_30d"] = tech.get("30d_return")
+
+        # Earnings warning
+        if symbol in earnings_map:
+            item["earnings_date"] = earnings_map[symbol].get("date")
+
+        items.append(item)
 
     return items
 

@@ -91,6 +91,10 @@ export default function TradePage() {
   );
   const [chartDays, setChartDays] = useState(30);
   const [chartLoading, setChartLoading] = useState(false);
+  const [riskCheck, setRiskCheck] = useState<{
+    warnings: { type: string; severity: string; message: string }[];
+    info: string[];
+  } | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/auth");
@@ -150,6 +154,21 @@ export default function TradePage() {
       .catch(() => setChartData([]))
       .finally(() => setChartLoading(false));
   }, [selectedSymbol, assetType, chartDays]);
+
+  // Pre-trade risk check — debounced
+  useEffect(() => {
+    setRiskCheck(null);
+    const qty = parseFloat(quantity);
+    if (!selectedSymbol || !quantity || isNaN(qty) || qty <= 0) return;
+
+    const timer = setTimeout(() => {
+      api
+        .preTradeRiskCheck(selectedSymbol, assetType, side, qty)
+        .then(setRiskCheck)
+        .catch(() => setRiskCheck(null));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [selectedSymbol, assetType, side, quantity]);
 
   const currentAssets = assetType === "stock" ? assets.stocks : assets.crypto;
 
@@ -594,6 +613,35 @@ export default function TradePage() {
                             {formatCurrency(estimatedTotal)}
                           </span>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Pre-trade risk check */}
+                    {riskCheck && (riskCheck.warnings.length > 0 || riskCheck.info.length > 0) && (
+                      <div className="space-y-2">
+                        {riskCheck.warnings.map((w, i) => (
+                          <div
+                            key={i}
+                            className={`rounded p-3 text-sm ${
+                              w.severity === "high"
+                                ? "bg-red-900/20 border border-red-800/30 text-red-400"
+                                : w.severity === "medium"
+                                  ? "bg-amber-900/20 border border-amber-800/30 text-amber-400"
+                                  : "bg-blue-900/20 border border-blue-800/30 text-blue-400"
+                            }`}
+                          >
+                            {w.message}
+                          </div>
+                        ))}
+                        {riskCheck.info.length > 0 && (
+                          <div className="bg-gray-800/50 rounded p-3">
+                            {riskCheck.info.map((info, i) => (
+                              <p key={i} className="text-xs text-gray-400">
+                                {info}
+                              </p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
 
