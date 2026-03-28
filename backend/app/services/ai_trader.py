@@ -175,24 +175,28 @@ PERSONALITIES = {
 #   "gemini-pro": {"label": "Gemini Pro", "api": "gemini", "model_id": "gemini-2.5-pro"},
 MODELS = {
     "gemini-flash": {
-        "label": "Llama 3.1 8B",
-        "api": "groq",
-        "model_id": "llama-3.1-8b-instant",
+        "label": "Mistral Small",
+        "api": "mistral",
+        "api_key_field": "mistral_api_key_2",
+        "model_id": "mistral-small-latest",
     },
     "gemini-pro": {
-        "label": "GPT-OSS 120B",
-        "api": "groq",
-        "model_id": "openai/gpt-oss-120b",
+        "label": "Mistral Large 2",
+        "api": "mistral",
+        "api_key_field": "mistral_api_key_2",
+        "model_id": "mistral-large-latest",
     },
     "mistral": {
-        "label": "Mistral",
+        "label": "Mistral Large",
         "api": "mistral",
+        "api_key_field": "mistral_api_key",
         "model_id": "mistral-large-latest",
     },
     "llama": {
-        "label": "Llama 3.3 70B",
-        "api": "groq",
-        "model_id": "llama-3.3-70b-versatile",
+        "label": "Mistral Medium",
+        "api": "mistral",
+        "api_key_field": "mistral_api_key",
+        "model_id": "mistral-medium-latest",
     },
 }
 
@@ -308,21 +312,30 @@ async def setup_ai_accounts() -> list[dict]:
 
     for trader in AI_TRADERS:
         display_name = trader["display_name"]
+        personality_name = PERSONALITIES[trader["personality_key"]]["name"]
+        email = f"ai-{trader['personality_key']}-{trader['model_key']}@papertrade.bot"
 
-        # Check if this AI trader already exists
+        # Check if this AI trader already exists (by model_key + personality in display_name)
         existing = (
             db.table("profiles")
-            .select("id")
-            .eq("display_name", display_name)
+            .select("id, display_name")
+            .eq("ai_model", trader["model_key"])
             .eq("is_ai", True)
+            .ilike("display_name", f"%{personality_name}%")
             .execute()
         )
         if existing.data:
-            created.append({"display_name": display_name, "status": "exists"})
+            # Update display_name in case model labels changed
+            if existing.data[0]["display_name"] != display_name:
+                db.table("profiles").update(
+                    {"display_name": display_name}
+                ).eq("id", existing.data[0]["id"]).execute()
+                created.append({"display_name": display_name, "status": "exists (renamed)"})
+            else:
+                created.append({"display_name": display_name, "status": "exists"})
             continue
 
         # Create auth user (AI traders get random unusable passwords)
-        email = f"ai-{trader['personality_key']}-{trader['model_key']}@papertrade.bot"
         try:
             user_resp = db.auth.admin.create_user(
                 {
@@ -849,8 +862,8 @@ def _format_peer_comparison(
         current_pnl = current_metrics.get("total_pnl", 0)
 
         # Determine who's outperforming
-        peer_label = peer_model.replace("llama", "Llama 3.3 70B").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
-        you_label = current_model.replace("llama", "Llama 3.3 70B").replace("gemini-flash", "Llama 3.1 8B").replace("gemini-pro", "GPT-OSS 120B").replace("mistral", "Mistral")
+        peer_label = MODELS.get(peer_model, {}).get("label", peer_model)
+        you_label = MODELS.get(current_model, {}).get("label", current_model)
 
         header = (
             f"### PEER INTELLIGENCE: {peer_label} counterpart\n"
@@ -1234,9 +1247,11 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
             raise Exception("GEMINI_API_KEY not configured")
         raw = await _call_gemini(model_cfg["model_id"], system_prompt, user_msg, settings.gemini_api_key)
     elif api == "mistral":
-        if not settings.mistral_api_key:
-            raise Exception("MISTRAL_API_KEY not configured")
-        raw = await _call_mistral(model_cfg["model_id"], system_prompt, user_msg, settings.mistral_api_key)
+        key_field = model_cfg.get("api_key_field", "mistral_api_key")
+        api_key = getattr(settings, key_field, "") or settings.mistral_api_key
+        if not api_key:
+            raise Exception(f"{key_field.upper()} not configured")
+        raw = await _call_mistral(model_cfg["model_id"], system_prompt, user_msg, api_key)
     elif api == "groq":
         if not settings.groq_api_key:
             raise Exception("GROQ_API_KEY not configured")
@@ -1388,11 +1403,9 @@ async def _execute_ai_trade(user_id: str, trade: dict, active_modules: set[str] 
 # ---------------------------------------------------------------------------
 
 # Provider-specific rate limit delays (seconds between calls).
-# These are tuned for free tier limits:
-#   gemini-flash (Llama 3.1 8B on Groq): 3s  |  gemini-pro (GPT-OSS 120B on Groq): 3s
-#   Mistral: generous → 3s                 |  Groq (Llama): generous → 3s
-# NOTE: When Gemini is re-enabled, restore original delays:
-#   Gemini Pro: 2 RPM → 35s  |  Gemini Flash: 15 RPM → 5s
+# All models now on Mistral API (2 keys, 10 traders each).
+#   mistral (key 1): Mistral Large + Mistral Medium = 10 traders
+#   mistral (key 2): Mistral Small + Mistral Large 2 = 10 traders
 PROVIDER_DELAYS = {
     "gemini-pro": 3,
     "gemini-flash": 3,

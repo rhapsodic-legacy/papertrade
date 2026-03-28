@@ -57,12 +57,12 @@ const PERSONALITY_LABELS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  "gemini-flash": "Llama 3.1 8B",
-  "gemini-pro": "GPT-OSS 120B",
-  mistral: "Mistral",
-  llama: "Llama 3.3 70B",
-  groq: "Llama 3.3 70B",
-  "Llama 3.3 70B": "Llama 3.3 70B",
+  "gemini-flash": "Mistral Small",
+  "gemini-pro": "Mistral Large 2",
+  mistral: "Mistral Large",
+  llama: "Mistral Medium",
+  groq: "Mistral Medium",
+  "Mistral Medium": "Mistral Medium",
 };
 
 type ViewMode = "daily" | "trader-history";

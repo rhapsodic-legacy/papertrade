@@ -171,8 +171,8 @@ def _persist_reflections(reflections: list[dict]) -> None:
 async def run_reflections() -> dict:
     """Main entry point: review settled trades and generate reflections."""
     settings = get_settings()
-    if not settings.groq_api_key:
-        return {"status": "skipped", "reason": "No Groq API key"}
+    if not settings.mistral_api_key:
+        return {"status": "skipped", "reason": "No Mistral API key"}
 
     db = get_supabase_admin()
     trades = _get_settled_trades(db)
@@ -206,12 +206,12 @@ async def run_reflections() -> dict:
         print("[REFLECTION] No trades with significant price movement")
         return {"status": "ok", "reflected_count": 0}
 
-    # Batch Groq call
+    # Batch Mistral call
     try:
         prompt = _build_reflection_prompt(enriched)
-        url = "https://api.groq.com/openai/v1/chat/completions"
+        url = "https://api.mistral.ai/v1/chat/completions"
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "mistral-large-latest",
             "messages": [
                 {"role": "system", "content": REFLECTION_SYSTEM},
                 {"role": "user", "content": prompt},
@@ -223,14 +223,14 @@ async def run_reflections() -> dict:
             resp = await client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Authorization": f"Bearer {settings.mistral_api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
             )
             if resp.status_code != 200:
-                print(f"[REFLECTION] Groq error {resp.status_code}: {resp.text[:300]}")
-                return {"status": "error", "reason": f"Groq {resp.status_code}"}
+                print(f"[REFLECTION] Mistral error {resp.status_code}: {resp.text[:300]}")
+                return {"status": "error", "reason": f"Mistral {resp.status_code}"}
             raw = resp.json()["choices"][0]["message"]["content"]
 
         reflections = _parse_reflections(raw, enriched)

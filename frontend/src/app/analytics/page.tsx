@@ -40,10 +40,10 @@ const PERSONALITY_LABELS: Record<string, string> = {
 };
 
 const MODEL_COLORS: Record<string, string> = {
-  "Llama 3.1 8B": "#34d399",
-  "GPT-OSS 120B": "#3b82f6",
-  Mistral: "#f59e0b",
-  "Llama 3.3 70B": "#8b5cf6",
+  "Mistral Small": "#34d399",
+  "Mistral Large 2": "#3b82f6",
+  "Mistral Large": "#f59e0b",
+  "Mistral Medium": "#8b5cf6",
 };
 
 const SECTOR_COLORS: Record<string, string> = {

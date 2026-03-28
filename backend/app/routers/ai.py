@@ -450,6 +450,25 @@ async def ping_providers():
     except Exception as e:
         results["mistral"] = {"status": "exception", "error": str(e)[:200]}
 
+    # Mistral Key 2
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.mistral_api_key_2}", "Content-Type": "application/json"},
+                json={
+                    "model": "mistral-large-latest",
+                    "messages": [{"role": "user", "content": "Say OK"}],
+                    "max_tokens": 5,
+                },
+            )
+            if resp.status_code == 200:
+                results["mistral_2"] = {"status": "ok", "response": resp.json()["choices"][0]["message"]["content"][:50]}
+            else:
+                results["mistral_2"] = {"status": "error", "code": resp.status_code, "body": resp.text[:300]}
+    except Exception as e:
+        results["mistral_2"] = {"status": "exception", "error": str(e)[:200]}
+
     # Gemini Flash (quick check)
     try:
         async with httpx.AsyncClient(timeout=30) as client:

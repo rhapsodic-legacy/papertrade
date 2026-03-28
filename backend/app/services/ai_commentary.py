@@ -139,11 +139,13 @@ Write your daily commentary blog post."""
                     settings.gemini_api_key,
                 )
             elif api_type == "mistral":
-                if not settings.mistral_api_key:
-                    raise Exception("MISTRAL_API_KEY not configured")
+                key_field = model_cfg.get("api_key_field", "mistral_api_key")
+                api_key = getattr(settings, key_field, "") or settings.mistral_api_key
+                if not api_key:
+                    raise Exception(f"{key_field.upper()} not configured")
                 raw = await _call_mistral(
                     model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
-                    settings.mistral_api_key,
+                    api_key,
                 )
             elif api_type == "groq":
                 if not settings.groq_api_key:

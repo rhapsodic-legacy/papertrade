@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     finnhub_api_key: str
     gemini_api_key: str = ""
     mistral_api_key: str = ""
+    mistral_api_key_2: str = ""
     cerebras_api_key: str = ""
     groq_api_key: str = ""
     starting_balance: float = 100_000.00

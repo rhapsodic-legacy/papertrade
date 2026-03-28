@@ -17,10 +17,10 @@ TRADING_DAYS_PER_YEAR = 252
 
 # Map internal model keys to display labels
 MODEL_DISPLAY_LABELS = {
-    "gemini-flash": "Llama 3.1 8B",
-    "gemini-pro": "GPT-OSS 120B",
-    "mistral": "Mistral",
-    "llama": "Llama 3.3 70B",
+    "gemini-flash": "Mistral Small",
+    "gemini-pro": "Mistral Large 2",
+    "mistral": "Mistral Large",
+    "llama": "Mistral Medium",
 }
 
 
@@ -31,11 +31,13 @@ def _model_label(key: str) -> str:
 def _clean_display_name(name: str) -> str:
     """Replace legacy model names in display names with current model labels."""
     import re
-    # Replace exact legacy names, avoiding partial matches (e.g. "Llama 3.1 8B" should stay)
-    name = re.sub(r'\(Llama\)', '(Llama 3.3 70B)', name)
-    name = re.sub(r'\(llama\)', '(Llama 3.3 70B)', name)
-    name = re.sub(r'\(Groq\)', '(Llama 3.3 70B)', name)
-    name = re.sub(r'\(GPT\)', '(GPT-OSS 120B)', name)
+    name = re.sub(r'\(Llama\)', '(Mistral Medium)', name)
+    name = re.sub(r'\(llama\)', '(Mistral Medium)', name)
+    name = re.sub(r'\(Groq\)', '(Mistral Medium)', name)
+    name = re.sub(r'\(GPT\)', '(Mistral Large 2)', name)
+    name = re.sub(r'\(Llama 3\.3 70B\)', '(Mistral Medium)', name)
+    name = re.sub(r'\(Llama 3\.1 8B\)', '(Mistral Small)', name)
+    name = re.sub(r'\(GPT-OSS 120B\)', '(Mistral Large 2)', name)
     return name
 
 

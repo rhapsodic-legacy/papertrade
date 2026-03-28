@@ -1,5 +1,5 @@
 """
-Headline sentiment scoring via Groq (Llama 3.3 70B).
+Headline sentiment scoring via Mistral Large.
 
 Batch-scores all daily headlines in a single API call, persists scores
 to headline_sentiments table, and returns aggregates for the market brief.
@@ -161,8 +161,8 @@ async def score_headlines(
     Returns (scored_list, aggregates_dict). On failure returns ([], {}).
     """
     settings = get_settings()
-    if not settings.groq_api_key:
-        print("[SENTIMENT] No Groq API key — skipping scoring")
+    if not settings.mistral_api_key:
+        print("[SENTIMENT] No Mistral API key — skipping scoring")
         return [], {}
 
     # Combine general + company headlines into one list
@@ -189,11 +189,11 @@ async def score_headlines(
         return [], {}
 
     try:
-        # Single Groq call with low temperature for consistent scoring
+        # Single Mistral call with low temperature for consistent scoring
         prompt = _build_scoring_prompt(headlines)
-        url = "https://api.groq.com/openai/v1/chat/completions"
+        url = "https://api.mistral.ai/v1/chat/completions"
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "mistral-large-latest",
             "messages": [
                 {"role": "system", "content": SCORING_SYSTEM},
                 {"role": "user", "content": prompt},
@@ -205,13 +205,13 @@ async def score_headlines(
             resp = await client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Authorization": f"Bearer {settings.mistral_api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
             )
             if resp.status_code != 200:
-                print(f"[SENTIMENT] Groq error {resp.status_code}: {resp.text[:300]}")
+                print(f"[SENTIMENT] Mistral error {resp.status_code}: {resp.text[:300]}")
                 return [], {}
             raw = resp.json()["choices"][0]["message"]["content"]
 
@@ -263,11 +263,11 @@ async def generate_market_narrative(
 ) -> str:
     """Generate a causal narrative explaining WHY today's headlines matter.
 
-    Uses a single Groq call to produce 3-5 bullet points connecting news
+    Uses a single Mistral call to produce 3-5 bullet points connecting news
     to expected market impact. Returns empty string on failure.
     """
     settings = get_settings()
-    if not settings.groq_api_key or not scored_headlines:
+    if not settings.mistral_api_key or not scored_headlines:
         return ""
 
     # Build context: top headlines sorted by absolute impact
@@ -314,9 +314,9 @@ async def generate_market_narrative(
     )
 
     try:
-        url = "https://api.groq.com/openai/v1/chat/completions"
+        url = "https://api.mistral.ai/v1/chat/completions"
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "mistral-large-latest",
             "messages": [
                 {"role": "system", "content": NARRATIVE_SYSTEM},
                 {"role": "user", "content": prompt},
@@ -328,13 +328,13 @@ async def generate_market_narrative(
             resp = await client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Authorization": f"Bearer {settings.mistral_api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
             )
             if resp.status_code != 200:
-                print(f"[NARRATIVE] Groq error {resp.status_code}: {resp.text[:300]}")
+                print(f"[NARRATIVE] Mistral error {resp.status_code}: {resp.text[:300]}")
                 return ""
             narrative = resp.json()["choices"][0]["message"]["content"].strip()
             print(f"[NARRATIVE] Generated market narrative ({len(narrative)} chars)")

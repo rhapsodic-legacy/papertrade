@@ -8,14 +8,14 @@ Paper trading platform with $100k virtual portfolios. 20 AI traders (5 personali
 - **Frontend:** Next.js 14 + TypeScript + Tailwind — `frontend/`
 - **Database:** Supabase (Postgres + Auth)
 - **Hosting:** Railway (backend), Vercel (frontend) — auto-deploy on push to main
-- **LLMs:** Llama 3.1 8B, GPT-OSS 120B, Mistral, Llama 3.3 70B — all via Groq/Mistral HTTP APIs, no SDKs. Gemini disabled (spending cap), config preserved for re-enablement.
+- **LLMs:** Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2 — all via Mistral HTTP API (2 API keys, 10 traders each), no SDKs. Groq/Gemini configs preserved but no longer used for trading.
 
 ## Architecture
 
 ### AI Trader Pipeline
 Single daily pipeline triggered via `POST /api/ai/pipeline/trigger?session=close`:
 1. **Market Brief** (`market_brief.py`) — fetches stock/crypto quotes, news, fundamentals, technicals, sentiment, insider trades from Finnhub/CoinGecko/Yahoo
-2. **Reflections** (`reflection.py`) — reviews settled trades (3-5 days old, >3% price move) via Groq, extracts lessons
+2. **Reflections** (`reflection.py`) — reviews settled trades (3-5 days old, >3% price move) via Mistral, extracts lessons
 3. **Trading** (`ai_trader.py`) — each AI gets personalized RAG prompt, makes buy/sell decisions. Auto-snapshots all portfolios after.
 4. **Commentary** (`ai_commentary.py`) — each AI writes a daily blog post explaining their decisions
 
@@ -26,7 +26,7 @@ Single daily pipeline triggered via `POST /api/ai/pipeline/trigger?session=close
 - **Contrarian Carl** — buys fear, sells euphoria
 - **Crypto Chad** — crypto-heavy with stock hedges
 
-Each personality runs on 4 models (Llama 3.1 8B, GPT-OSS 120B, Mistral, Llama 3.3 70B) = 20 AI traders total.
+Each personality runs on 4 Mistral models (Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2) = 20 AI traders total. Split across 2 API keys (10 each).
 
 ### Key Services
 | Service | Purpose |
@@ -34,7 +34,7 @@ Each personality runs on 4 models (Llama 3.1 8B, GPT-OSS 120B, Mistral, Llama 3.
 | `ai_trader.py` | Trading decisions, performance intelligence, peer comparison |
 | `rag_toolkit.py` | Assembles personalized data prompts per personality |
 | `market_brief.py` | Daily market data collection (stocks, crypto, news, sentiment) |
-| `reflection.py` | Post-trade learning loop (Groq reviews settled trades) |
+| `reflection.py` | Post-trade learning loop (Mistral reviews settled trades) |
 | `ai_commentary.py` | Daily blog posts per trader |
 | `analytics.py` | Sortino ratio, module attribution, reflection trends, trade reasoning |
 | `backtest.py` | Benchmark comparison, regime analysis, period comparison |
@@ -64,9 +64,11 @@ Two active cron jobs:
 2. **Daily Snapshots** — 5:30 PM daily → `POST /api/portfolio/snapshots/trigger` (safety net for human portfolios)
 
 ### Railway Environment Variables
-`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `STARTING_BALANCE`, `FRONTEND_URL`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `STARTING_BALANCE`, `FRONTEND_URL`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`, `GROQ_API_KEY`
 
-GROQ_API_KEY is required for reflections and Llama-based traders.
+`MISTRAL_API_KEY` powers 10 traders (Mistral Large + Mistral Medium models) plus reflections and sentiment scoring.
+`MISTRAL_API_KEY_2` powers the other 10 traders (Mistral Small + Mistral Large 2 models).
+`GROQ_API_KEY` is no longer used for trading but config is preserved.
 
 ## API Routes
 - `/api/ai/` — AI trading triggers, commentary, trader profiles

@@ -25,9 +25,9 @@ const PERSONALITY_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  gemini: "Llama 8B/GPT-OSS",
-  mistral: "Mistral",
-  groq: "Llama 3.3 70B",
+  gemini: "Mistral Small/Large 2",
+  mistral: "Mistral Large",
+  groq: "Mistral Medium",
 };
 
 type ModuleTag = {

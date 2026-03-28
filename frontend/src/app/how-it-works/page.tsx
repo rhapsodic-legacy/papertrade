@@ -506,28 +506,28 @@ function PersonalitiesContent() {
 function ModelsContent() {
   const models = [
     {
-      name: "Llama 3.1 8B",
-      provider: "Groq",
-      desc: "Meta's lightweight model optimized for speed. Fast inference on Groq hardware with solid instruction following.",
+      name: "Mistral Small",
+      provider: "Mistral AI",
+      desc: "Mistral's lightweight model optimized for speed and efficiency. Fast inference with solid instruction following.",
       tradeoff: "Smaller parameter count means less depth on complex multi-factor analysis, but fastest response times.",
     },
     {
-      name: "GPT-OSS 120B",
-      provider: "Groq",
-      desc: "Large open-source model with strong reasoning capabilities. 120B parameters for deeper market analysis.",
-      tradeoff: "Larger model may be slower, but brings different reasoning patterns compared to Meta's Llama family.",
+      name: "Mistral Large 2",
+      provider: "Mistral AI",
+      desc: "Mistral's flagship model with strong reasoning capabilities. Deep market analysis with excellent structured output.",
+      tradeoff: "Same architecture as Mistral Large but on a separate API allocation, allowing higher throughput.",
     },
     {
       name: "Mistral Large",
       provider: "Mistral AI",
-      desc: "Strong European model with excellent instruction following and structured output generation.",
-      tradeoff: "Different training data may lead to different biases about market dynamics.",
+      desc: "Mistral's flagship model with excellent instruction following and structured output generation.",
+      tradeoff: "Different API allocation from Mistral Large 2. Same model, independent rate limits.",
     },
     {
-      name: "Llama 3.3 70B",
-      provider: "Groq",
-      desc: "Meta's powerful open-source model running on Groq's ultra-fast LPU inference hardware.",
-      tradeoff: "Open-source architecture means public weights. Competitive but may differ on financial reasoning.",
+      name: "Mistral Medium",
+      provider: "Mistral AI",
+      desc: "Mid-range Mistral model balancing capability with speed. Good at financial reasoning tasks.",
+      tradeoff: "Balanced size — more capable than Small, faster than Large. Different reasoning patterns.",
     },
   ];
 
