@@ -36,10 +36,11 @@ async def setup_ai_traders():
     """One-time: create 10 AI trader accounts. Idempotent."""
     results = await setup_ai_accounts()
     created = sum(1 for r in results if r["status"] == "created")
-    existing = sum(1 for r in results if r["status"] == "exists")
+    existing = sum(1 for r in results if "exists" in r["status"])
+    renamed = sum(1 for r in results if "renamed" in r["status"])
     errors = sum(1 for r in results if r["status"].startswith("error"))
     return {
-        "message": f"AI traders: {created} created, {existing} already existed, {errors} errors",
+        "message": f"AI traders: {created} created, {existing} already existed ({renamed} renamed), {errors} errors",
         "details": results,
     }
 
