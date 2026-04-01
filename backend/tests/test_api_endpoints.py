@@ -279,10 +279,17 @@ class TestWatchlistEndpoints:
             "name": "Apple",
         }
 
+        mock_brief = {
+            "stock_technicals": {},
+            "crypto_technicals": {},
+            "earnings_calendar": [],
+        }
+
         with (
             patch("app.routers.watchlist.get_user_id_from_token", return_value="user-1"),
             patch("app.routers.watchlist.get_supabase_admin", return_value=mock_db),
             patch("app.routers.watchlist.get_quote", new_callable=AsyncMock, return_value=mock_quote),
+            patch("app.routers.watchlist.get_latest_brief", new_callable=AsyncMock, return_value=mock_brief),
         ):
             resp = client.get(
                 "/api/watchlist/",
