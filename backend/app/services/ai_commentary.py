@@ -6,6 +6,8 @@ from app.config import get_settings
 from app.services.ai_trader import (
     PERSONALITIES,
     MODELS,
+    CUSTOM_TRADER_MODEL,
+    CUSTOM_RISK_PRESETS,
     _call_gemini,
     _call_mistral,
     _call_groq,
@@ -62,14 +64,28 @@ async def generate_commentary() -> dict:
         display_name = profile["display_name"]
         model_key = profile.get("ai_model", "")
 
-        # Determine personality from display name
+        # Determine personality from display name (or custom trader config)
         personality_key = None
+        custom_personality = None
         for pkey, pinfo in PERSONALITIES.items():
             if pinfo["name"] in display_name:
                 personality_key = pkey
                 break
 
-        if not personality_key or model_key not in MODELS:
+        if not personality_key and model_key == "custom":
+            try:
+                ct = db.table("custom_traders").select("*").eq("profile_id", user_id).eq("is_active", True).single().execute()
+                if ct.data:
+                    cfg = ct.data
+                    personality_key = "custom"
+                    custom_personality = {
+                        "name": cfg["name"],
+                        "prompt": cfg["strategy_prompt"],
+                    }
+            except Exception:
+                pass
+
+        if not personality_key or (model_key not in MODELS and model_key != "custom"):
             results.append({
                 "trader": display_name,
                 "status": "skipped",
@@ -105,8 +121,8 @@ async def generate_commentary() -> dict:
             portfolio = await _get_ai_portfolio(db, user_id)
 
             # Build the prompt
-            personality = PERSONALITIES[personality_key]
-            model_cfg = MODELS[model_key]
+            personality = custom_personality if personality_key == "custom" else PERSONALITIES[personality_key]
+            model_cfg = CUSTOM_TRADER_MODEL if model_key == "custom" else MODELS[model_key]
 
             trades_text = "No trades today." if not trades else json.dumps(trades, indent=2)
             positions_text = (

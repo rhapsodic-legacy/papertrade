@@ -21,6 +21,7 @@ MODEL_DISPLAY_LABELS = {
     "gemini-pro": "Mistral Large 2",
     "mistral": "Mistral Large",
     "llama": "Mistral Medium",
+    "custom": "Custom (Mistral)",
 }
 
 

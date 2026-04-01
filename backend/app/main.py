@@ -14,7 +14,7 @@ logging.basicConfig(
     format="%(levelname)s:%(name)s: %(message)s",
 )
 
-from app.routers import ai, analytics, auth, market, notifications, portfolio, trading, watchlist
+from app.routers import ai, analytics, auth, custom_traders, market, notifications, portfolio, trading, watchlist
 
 app = FastAPI(
     title="PaperTrade",
@@ -40,6 +40,7 @@ app.add_middleware(
 
 app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(custom_traders.router, prefix="/api/custom-traders", tags=["custom-traders"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])

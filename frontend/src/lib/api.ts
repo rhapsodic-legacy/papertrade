@@ -878,6 +878,74 @@ class ApiClient {
       method: "DELETE",
     });
   }
+
+  // Custom AI Traders
+  async getCustomTraderModules() {
+    return this.request<{
+      modules: {
+        key: string;
+        label: string;
+        description: string;
+        icon: string;
+        color: string;
+      }[];
+    }>("/api/custom-traders/modules");
+  }
+
+  async getMyCustomTraders() {
+    return this.request<{
+      traders: {
+        id: string;
+        profile_id: string;
+        name: string;
+        strategy_prompt: string;
+        risk_level: string;
+        asset_focus: string;
+        toolkit_modules: string[];
+        is_active: boolean;
+        display_name: string;
+        total_value: number;
+        created_at: string;
+      }[];
+    }>("/api/custom-traders/");
+  }
+
+  async createCustomTrader(data: {
+    name: string;
+    strategy_prompt: string;
+    risk_level: string;
+    asset_focus: string;
+    toolkit_modules: string[];
+  }) {
+    return this.request<{
+      id: string;
+      profile_id: string;
+      display_name: string;
+      status: string;
+    }>("/api/custom-traders/", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateCustomTrader(traderId: string, data: {
+    name?: string;
+    strategy_prompt?: string;
+    risk_level?: string;
+    asset_focus?: string;
+    toolkit_modules?: string[];
+  }) {
+    return this.request<{ status: string; id: string }>(`/api/custom-traders/${traderId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCustomTrader(traderId: string) {
+    return this.request<{ status: string; id: string }>(`/api/custom-traders/${traderId}`, {
+      method: "DELETE",
+    });
+  }
 }
 
 export const api = new ApiClient();

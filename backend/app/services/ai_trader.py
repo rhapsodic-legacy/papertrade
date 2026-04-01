@@ -200,6 +200,39 @@ MODELS = {
     },
 }
 
+# Custom trader model (uses third Mistral API key)
+CUSTOM_TRADER_MODEL = {
+    "label": "Custom (Mistral)",
+    "api": "mistral",
+    "api_key_field": "mistral_api_key_3",
+    "model_id": "mistral-large-latest",
+}
+
+# Risk presets for custom traders
+CUSTOM_RISK_PRESETS = {
+    "low": {
+        "stop_loss_pct": -6.0,
+        "take_profit_pct": 12.0,
+        "max_position_pct": 12.0,
+        "max_hold_days": 45,
+        "min_sells_with_positions": 1,
+    },
+    "medium": {
+        "stop_loss_pct": -8.0,
+        "take_profit_pct": 15.0,
+        "max_position_pct": 15.0,
+        "max_hold_days": 30,
+        "min_sells_with_positions": 1,
+    },
+    "high": {
+        "stop_loss_pct": -5.0,
+        "take_profit_pct": 10.0,
+        "max_position_pct": 20.0,
+        "max_hold_days": 14,
+        "min_sells_with_positions": 1,
+    },
+}
+
 # All AI traders: 5 personalities x 4 models = 20
 AI_TRADERS = [
     {
@@ -1022,11 +1055,12 @@ def _format_trade_memory(trades: list[dict], positions: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _compute_portfolio_risk(portfolio: dict, personality_key: str = None, brief: dict | None = None) -> str:
+def _compute_portfolio_risk(portfolio: dict, personality_key: str = None, brief: dict | None = None, override_risk_params: dict | None = None) -> str:
     """Compute portfolio risk metrics: sector exposure, concentration, unrealized P&L.
     This gives AIs the self-awareness to manage risk like a professional.
     When personality_key is provided, includes risk rule alerts.
-    When brief is provided, includes ATR-based stop suggestions and earnings warnings."""
+    When brief is provided, includes ATR-based stop suggestions and earnings warnings.
+    override_risk_params can be passed for custom traders whose params aren't in PERSONALITIES."""
     positions = portfolio.get("positions", [])
     cash = portfolio.get("cash", 0)
 
@@ -1038,8 +1072,8 @@ def _compute_portfolio_risk(portfolio: dict, personality_key: str = None, brief:
         return "Portfolio value is zero."
 
     # Get risk params for this personality
-    risk_params = None
-    if personality_key and personality_key in PERSONALITIES:
+    risk_params = override_risk_params
+    if not risk_params and personality_key and personality_key in PERSONALITIES:
         risk_params = PERSONALITIES[personality_key].get("risk_params", {})
 
     lines = []
@@ -1210,14 +1244,15 @@ def _compute_portfolio_risk(portfolio: dict, personality_key: str = None, brief:
     return "\n".join(lines)
 
 
-async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close", agentic_context_data: dict | None = None) -> list[dict]:
+async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, portfolio: dict, trade_memory: str = "", session: str = "close", agentic_context_data: dict | None = None, custom_personality: dict | None = None) -> list[dict]:
     """Ask an AI model for its trading decisions."""
     settings = get_settings()
-    personality = PERSONALITIES[personality_key]
-    model_cfg = MODELS[model_key]
+    personality = custom_personality if personality_key == "custom" else PERSONALITIES[personality_key]
+    model_cfg = CUSTOM_TRADER_MODEL if model_key == "custom" else MODELS[model_key]
 
     # Portfolio risk analysis (with personality-specific risk alerts + ATR stops + earnings)
-    risk_analysis = _compute_portfolio_risk(portfolio, personality_key, brief=brief)
+    custom_risk = personality.get("risk_params", {}) if personality_key == "custom" else None
+    risk_analysis = _compute_portfolio_risk(portfolio, personality_key, brief=brief, override_risk_params=custom_risk)
     risk_params = personality.get("risk_params", {})
 
     # Build the user message via modular toolkit
@@ -1411,6 +1446,7 @@ PROVIDER_DELAYS = {
     "gemini-flash": 3,
     "mistral": 3,
     "llama": 3,
+    "custom": 3,
 }
 
 
@@ -1425,14 +1461,41 @@ async def _run_trader(
     model_key = profile.get("ai_model", "")
     print(f"[PIPELINE] Starting trader: {display_name} (model={model_key})")
 
-    # Determine personality from display name
+    # Determine personality from display name (or custom trader config)
     personality_key = None
+    custom_personality = None
     for pkey, pinfo in PERSONALITIES.items():
         if pinfo["name"] in display_name:
             personality_key = pkey
             break
 
-    if not personality_key or model_key not in MODELS:
+    if not personality_key and model_key == "custom":
+        # Load custom trader config from DB
+        try:
+            ct = db.table("custom_traders").select("*").eq("profile_id", user_id).eq("is_active", True).single().execute()
+            if ct.data:
+                cfg = ct.data
+                personality_key = "custom"
+                # Build asset focus instruction
+                focus_text = ""
+                if cfg["asset_focus"] == "stocks":
+                    focus_text = "You ONLY trade stocks. Do NOT buy or sell any crypto. "
+                elif cfg["asset_focus"] == "crypto":
+                    focus_text = "You ONLY trade crypto. Do NOT buy or sell any stocks. "
+
+                custom_personality = {
+                    "name": cfg["name"],
+                    "prompt": focus_text + cfg["strategy_prompt"],
+                    "risk_params": CUSTOM_RISK_PRESETS.get(cfg["risk_level"], CUSTOM_RISK_PRESETS["medium"]),
+                    "toolkit": [
+                        {"module": m, "weight": 10 - i}
+                        for i, m in enumerate(cfg["toolkit_modules"])
+                    ],
+                }
+        except Exception as e:
+            print(f"[PIPELINE SKIP] {display_name}: failed to load custom config: {e}")
+
+    if not personality_key or (model_key not in MODELS and model_key != "custom"):
         print(f"[PIPELINE SKIP] {display_name}: unknown personality or model ({model_key})")
         return {
             "trader": display_name,
@@ -1476,7 +1539,8 @@ async def _run_trader(
             pass
 
         # --- Agentic Pipeline Steps 3 & 4 (conditional on toolkit) ---
-        personality = PERSONALITIES[personality_key]
+        personality = custom_personality if personality_key == "custom" else PERSONALITIES[personality_key]
+        model_cfg = CUSTOM_TRADER_MODEL if model_key == "custom" else MODELS[model_key]
         toolkit_modules = {t["module"] for t in personality.get("toolkit", [])}
 
         held_symbols = [p["symbol"] for p in portfolio["positions"]]
@@ -1551,7 +1615,7 @@ async def _run_trader(
             "cross_trader_text": cross_trader_text,
             "performance_intel": perf_intel_text,
         }
-        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data)
+        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 
         # Execute trades
         executed = []

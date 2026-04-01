@@ -274,12 +274,22 @@ async def get_ai_trader_profile(trader_id: str):
 
     profile = profile_resp.data[0]
 
-    # Determine personality
+    # Determine personality (built-in or custom)
     personality_key = None
+    custom_config = None
     for pkey, pinfo in PERSONALITIES.items():
         if pinfo["name"] in profile["display_name"]:
             personality_key = pkey
             break
+
+    if not personality_key and profile.get("ai_model") == "custom":
+        try:
+            ct = db.table("custom_traders").select("*").eq("profile_id", trader_id).eq("is_active", True).single().execute()
+            if ct.data:
+                personality_key = "custom"
+                custom_config = ct.data
+        except Exception:
+            pass
 
     # Get portfolio with live prices
     portfolio = await _get_ai_portfolio(db, trader_id)
@@ -317,14 +327,23 @@ async def get_ai_trader_profile(trader_id: str):
     invested_value = sum(p["market_value"] for p in portfolio["positions"])
     total_value = portfolio["cash"] + invested_value
 
-    toolkit_config = PERSONALITIES[personality_key].get("toolkit", []) if personality_key else []
+    if personality_key == "custom" and custom_config:
+        toolkit_config = [{"module": m, "weight": 10 - i} for i, m in enumerate(custom_config.get("toolkit_modules", []))]
+        personality_desc = custom_config.get("strategy_prompt", "")
+    elif personality_key and personality_key in PERSONALITIES:
+        toolkit_config = PERSONALITIES[personality_key].get("toolkit", [])
+        personality_desc = PERSONALITIES[personality_key]["prompt"]
+    else:
+        toolkit_config = []
+        personality_desc = None
 
     return {
         "display_name": _clean_display_name(profile["display_name"]),
         "ai_model": _model_label(profile["ai_model"]),
         "personality": personality_key,
-        "personality_description": PERSONALITIES[personality_key]["prompt"] if personality_key else None,
+        "personality_description": personality_desc,
         "toolkit": get_personality_toolkit_info(personality_key, toolkit_config) if personality_key else [],
+        "is_custom": personality_key == "custom",
         "cash_balance": portfolio["cash"],
         "invested_value": round(invested_value, 2),
         "total_value": round(total_value, 2),
