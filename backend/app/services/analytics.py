@@ -409,6 +409,199 @@ async def get_ai_comparison() -> dict:
     }
 
 
+async def get_model_deep_dive(days: int = 7) -> dict:
+    """Compare model performance over a recent window, eliminating duration bias.
+
+    Uses snapshots to compute return over the last N days — so all models
+    are measured over the same calendar period regardless of when they
+    started trading.  Also computes per-model trade quality metrics
+    (win rate, avg P&L per sell, trade frequency) over that window.
+    """
+    db = get_supabase_admin()
+    from app.services.ai_trader import PERSONALITIES
+
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    today_str = date.today().isoformat()
+
+    # AI profiles
+    profiles_resp = (
+        db.table("profiles")
+        .select("id, display_name, ai_model, is_ai")
+        .eq("is_ai", True)
+        .execute()
+    )
+    if not profiles_resp.data:
+        return {"error": "No AI traders found"}
+
+    trader_ids = [p["id"] for p in profiles_resp.data]
+
+    # Snapshots in the window
+    snap_resp = (
+        db.table("portfolio_snapshots")
+        .select("user_id, snapshot_date, total_value")
+        .in_("user_id", trader_ids)
+        .gte("snapshot_date", cutoff)
+        .order("snapshot_date", desc=False)
+        .execute()
+    )
+
+    snap_by_user: dict[str, list] = {}
+    for s in snap_resp.data:
+        snap_by_user.setdefault(s["user_id"], []).append(s)
+
+    # Trades in the window
+    tx_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning")
+        .in_("user_id", trader_ids)
+        .gte("created_at", f"{cutoff}T00:00:00")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    tx_by_user: dict[str, list] = {}
+    for tx in tx_resp.data:
+        tx_by_user.setdefault(tx["user_id"], []).append(tx)
+
+    # Build per-trader results
+    traders = []
+    for profile in profiles_resp.data:
+        uid = profile["id"]
+        snaps = snap_by_user.get(uid, [])
+        txs = tx_by_user.get(uid, [])
+
+        # Window return from snapshots
+        if len(snaps) >= 2:
+            start_val = snaps[0]["total_value"]
+            end_val = snaps[-1]["total_value"]
+            window_return = ((end_val / start_val) - 1) * 100 if start_val else 0
+        elif len(snaps) == 1:
+            window_return = ((snaps[0]["total_value"] / STARTING_BALANCE) - 1) * 100
+        else:
+            window_return = 0
+
+        # Trade metrics in window
+        buys = [t for t in txs if t["side"] == "buy"]
+        sells = [t for t in txs if t["side"] == "sell"]
+        sell_pnls = _match_sell_pnl(txs)
+
+        wins = [p for p in sell_pnls if p > 0]
+        losses = [p for p in sell_pnls if p <= 0]
+        win_rate = len(wins) / len(sell_pnls) * 100 if sell_pnls else 0
+        avg_win = sum(wins) / len(wins) if wins else 0
+        avg_loss = sum(losses) / len(losses) if losses else 0
+
+        # Reasoning quality
+        reasoning_lens = [len(t.get("reasoning", "") or "") for t in txs]
+        avg_reasoning_len = sum(reasoning_lens) / len(reasoning_lens) if reasoning_lens else 0
+
+        personality = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in profile["display_name"]:
+                personality = pkey
+                break
+
+        if not personality and profile.get("ai_model") == "custom":
+            personality = "custom"
+
+        traders.append({
+            "id": uid,
+            "display_name": _clean_display_name(profile["display_name"]),
+            "model": _model_label(profile["ai_model"]),
+            "model_key": profile["ai_model"],
+            "personality": personality,
+            "window_return_pct": round(window_return, 2),
+            "window_buys": len(buys),
+            "window_sells": len(sells),
+            "window_win_rate": round(win_rate, 1),
+            "window_avg_win": round(avg_win, 2),
+            "window_avg_loss": round(avg_loss, 2),
+            "avg_reasoning_len": round(avg_reasoning_len),
+            "snapshot_count": len(snaps),
+        })
+
+    # Aggregate by model
+    by_model: dict[str, list] = {}
+    for t in traders:
+        by_model.setdefault(t["model"], []).append(t)
+
+    model_stats = {}
+    for model, group in by_model.items():
+        n = len(group)
+        total_trades = sum(t["window_buys"] + t["window_sells"] for t in group)
+        model_stats[model] = {
+            "count": n,
+            "avg_window_return": round(sum(t["window_return_pct"] for t in group) / n, 2),
+            "avg_win_rate": round(sum(t["window_win_rate"] for t in group) / n, 1),
+            "total_trades": total_trades,
+            "avg_trades_per_trader": round(total_trades / n, 1),
+            "avg_reasoning_len": round(sum(t["avg_reasoning_len"] for t in group) / n),
+            "best": max(group, key=lambda t: t["window_return_pct"])["display_name"],
+            "worst": min(group, key=lambda t: t["window_return_pct"])["display_name"],
+        }
+
+    # Aggregate by personality
+    by_pers: dict[str, list] = {}
+    for t in traders:
+        if t["personality"]:
+            by_pers.setdefault(t["personality"], []).append(t)
+
+    pers_stats = {}
+    for pers, group in by_pers.items():
+        n = len(group)
+        pers_stats[pers] = {
+            "count": n,
+            "avg_window_return": round(sum(t["window_return_pct"] for t in group) / n, 2),
+            "avg_win_rate": round(sum(t["window_win_rate"] for t in group) / n, 1),
+            "total_trades": sum(t["window_buys"] + t["window_sells"] for t in group),
+        }
+
+    return {
+        "window_days": days,
+        "start_date": cutoff,
+        "end_date": today_str,
+        "traders": sorted(traders, key=lambda x: x["window_return_pct"], reverse=True),
+        "by_model": model_stats,
+        "by_personality": pers_stats,
+    }
+
+
+def _match_sell_pnl(txs: list[dict]) -> list[float]:
+    """Simple FIFO P&L matching for sells within a transaction list."""
+    # Track cost basis per symbol
+    holdings: dict[str, list[tuple[float, float]]] = {}  # symbol -> [(qty, price)]
+    pnls = []
+
+    for tx in txs:
+        sym = tx["symbol"]
+        qty = tx["quantity"]
+        price = tx["price"]
+
+        if tx["side"] == "buy":
+            holdings.setdefault(sym, []).append((qty, price))
+        elif tx["side"] == "sell" and sym in holdings:
+            remaining = qty
+            cost = 0.0
+            matched = 0.0
+            lots = holdings[sym]
+            while remaining > 0 and lots:
+                lot_qty, lot_price = lots[0]
+                take = min(remaining, lot_qty)
+                cost += take * lot_price
+                matched += take
+                remaining -= take
+                if take >= lot_qty:
+                    lots.pop(0)
+                else:
+                    lots[0] = (lot_qty - take, lot_price)
+            if matched > 0:
+                revenue = matched * price
+                pnl_pct = ((revenue / cost) - 1) * 100
+                pnls.append(pnl_pct)
+
+    return pnls
+
+
 def _aggregate_group(group: list[dict]) -> dict:
     """Average metrics across a group of traders."""
     n = len(group)

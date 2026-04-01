@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.analytics import (
-    get_trader_analytics, get_ai_comparison, get_module_attribution,
+    get_trader_analytics, get_ai_comparison, get_model_deep_dive,
+    get_module_attribution,
     get_reflection_trends, get_trade_reasoning, _model_label, _clean_display_name,
 )
 from app.services.backtest import (
@@ -101,3 +102,13 @@ async def trade_reasoning(
     modules used, grouped by date. Flags convergence (3+ AIs making the same
     call on the same symbol) as potential herd behavior."""
     return await get_trade_reasoning(days=days, trader_id=trader_id, symbol=symbol)
+
+
+@router.get("/model-deep-dive")
+async def model_deep_dive(days: int = Query(7, ge=3, le=90)):
+    """Fair model comparison over a recent window, eliminating duration bias.
+
+    Computes return, win rate, and trade quality for each model over the
+    last N days using snapshots — so all models are measured over the
+    same calendar period regardless of when they started trading."""
+    return await get_model_deep_dive(days=days)

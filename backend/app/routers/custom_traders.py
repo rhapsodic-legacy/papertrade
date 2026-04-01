@@ -35,17 +35,17 @@ CREATE TABLE IF NOT EXISTS custom_traders (
 ALTER TABLE custom_traders ENABLE ROW LEVEL SECURITY;
 
 -- Allow service role full access (for pipeline)
-CREATE POLICY IF NOT EXISTS "service_role_all" ON custom_traders
+CREATE POLICY "service_role_all" ON custom_traders
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Allow authenticated users to read/manage their own traders
-CREATE POLICY IF NOT EXISTS "owner_select" ON custom_traders
+CREATE POLICY "owner_select" ON custom_traders
     FOR SELECT TO authenticated USING (owner_id = auth.uid());
-CREATE POLICY IF NOT EXISTS "owner_insert" ON custom_traders
+CREATE POLICY "owner_insert" ON custom_traders
     FOR INSERT TO authenticated WITH CHECK (owner_id = auth.uid());
-CREATE POLICY IF NOT EXISTS "owner_update" ON custom_traders
+CREATE POLICY "owner_update" ON custom_traders
     FOR UPDATE TO authenticated USING (owner_id = auth.uid());
-CREATE POLICY IF NOT EXISTS "owner_delete" ON custom_traders
+CREATE POLICY "owner_delete" ON custom_traders
     FOR DELETE TO authenticated USING (owner_id = auth.uid());
 """
 
