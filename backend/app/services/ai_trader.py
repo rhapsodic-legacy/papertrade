@@ -44,6 +44,9 @@ PERSONALITIES = {
             {"module": "fundamentals", "weight": 7},
             {"module": "optimizer", "weight": 6},
             {"module": "sentiment", "weight": 5},
+            {"module": "signal_ranker", "weight": 4},
+            {"module": "trade_context", "weight": 3},
+            {"module": "dynamic_risk", "weight": 2},
         ],
     },
     "steady_eddie": {
@@ -73,6 +76,9 @@ PERSONALITIES = {
             {"module": "macro", "weight": 9},
             {"module": "optimizer", "weight": 8},
             {"module": "technicals", "weight": 7},
+            {"module": "signal_ranker", "weight": 4},
+            {"module": "trade_context", "weight": 3},
+            {"module": "dynamic_risk", "weight": 2},
         ],
     },
     "yolo_bot": {
@@ -103,6 +109,8 @@ PERSONALITIES = {
             {"module": "patterns", "weight": 8},
             {"module": "sentiment", "weight": 7},
             {"module": "optimizer", "weight": 5},
+            {"module": "signal_ranker", "weight": 4},
+            {"module": "trade_context", "weight": 3},
         ],
     },
     "contrarian_carl": {
@@ -134,6 +142,9 @@ PERSONALITIES = {
             {"module": "patterns", "weight": 7},
             {"module": "macro", "weight": 6},
             {"module": "optimizer", "weight": 5},
+            {"module": "signal_ranker", "weight": 4},
+            {"module": "trade_context", "weight": 3},
+            {"module": "dynamic_risk", "weight": 2},
         ],
     },
     "crypto_chad": {
@@ -164,6 +175,8 @@ PERSONALITIES = {
             {"module": "patterns", "weight": 8},
             {"module": "sentiment", "weight": 6},
             {"module": "optimizer", "weight": 5},
+            {"module": "signal_ranker", "weight": 4},
+            {"module": "trade_context", "weight": 3},
         ],
     },
 }
@@ -554,6 +567,193 @@ def _get_ai_trade_history(db, user_id: str, limit: int = 15) -> list[dict]:
         .execute()
     )
     return resp.data if resp.data else []
+
+
+def _compute_trade_context(db, user_id: str) -> dict | None:
+    """Compute historical trade statistics for a trader's own track record.
+
+    Returns win/loss stats by asset type, holding period, sector, and streak.
+    """
+    # Fetch more history for statistics (up to 100 trades)
+    resp = (
+        db.table("transactions")
+        .select("symbol, asset_type, side, quantity, price, total, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=False)
+        .limit(200)
+        .execute()
+    )
+    txs = resp.data if resp.data else []
+    if len(txs) < 4:
+        return None
+
+    # FIFO matching to get round-trip P&L
+    holdings: dict[str, list[tuple[float, float, str, str]]] = {}  # sym -> [(qty, price, date, asset_type)]
+    round_trips = []
+
+    for tx in txs:
+        sym = tx["symbol"]
+        qty = tx["quantity"]
+        price = tx["price"]
+        atype = tx.get("asset_type", "stock")
+        trade_date = tx.get("created_at", "")[:10]
+
+        if tx["side"] == "buy":
+            holdings.setdefault(sym, []).append((qty, price, trade_date, atype))
+        elif tx["side"] == "sell" and sym in holdings and holdings[sym]:
+            remaining = qty
+            lots = holdings[sym]
+            while remaining > 0 and lots:
+                lot_qty, lot_price, buy_date, lot_type = lots[0]
+                take = min(remaining, lot_qty)
+                if take > 0 and lot_price > 0:
+                    pnl_pct = ((price / lot_price) - 1) * 100
+                    # Compute holding days
+                    try:
+                        from datetime import datetime
+                        buy_dt = datetime.fromisoformat(buy_date)
+                        sell_dt = datetime.fromisoformat(trade_date)
+                        hold_days = (sell_dt - buy_dt).days
+                    except Exception:
+                        hold_days = 0
+                    round_trips.append({
+                        "symbol": sym,
+                        "asset_type": lot_type,
+                        "pnl_pct": pnl_pct,
+                        "hold_days": hold_days,
+                        "sector": STOCK_SECTORS.get(sym, "Other") if lot_type != "crypto" else "Crypto",
+                    })
+                remaining -= take
+                if take >= lot_qty:
+                    lots.pop(0)
+                else:
+                    lots[0] = (lot_qty - take, lot_price, buy_date, lot_type)
+
+    if not round_trips:
+        return None
+
+    wins = [r for r in round_trips if r["pnl_pct"] > 0]
+    losses = [r for r in round_trips if r["pnl_pct"] <= 0]
+
+    result = {
+        "total_round_trips": len(round_trips),
+        "win_rate": len(wins) / len(round_trips) * 100,
+        "avg_win_pct": sum(r["pnl_pct"] for r in wins) / len(wins) if wins else 0,
+        "avg_loss_pct": sum(r["pnl_pct"] for r in losses) / len(losses) if losses else 0,
+    }
+
+    # By asset type
+    by_type: dict[str, list] = {}
+    for r in round_trips:
+        by_type.setdefault(r["asset_type"], []).append(r)
+    result["by_asset_type"] = {
+        atype: {
+            "count": len(trades),
+            "win_rate": sum(1 for t in trades if t["pnl_pct"] > 0) / len(trades) * 100,
+            "avg_pnl": sum(t["pnl_pct"] for t in trades) / len(trades),
+        }
+        for atype, trades in by_type.items()
+    }
+
+    # By holding period
+    short = [r for r in round_trips if r["hold_days"] <= 7]
+    medium = [r for r in round_trips if 7 < r["hold_days"] <= 21]
+    long_hold = [r for r in round_trips if r["hold_days"] > 21]
+    by_hold = {}
+    for label, group in [("1-7 days", short), ("8-21 days", medium), ("22+ days", long_hold)]:
+        if group:
+            by_hold[label] = {
+                "count": len(group),
+                "win_rate": sum(1 for t in group if t["pnl_pct"] > 0) / len(group) * 100,
+                "avg_pnl": sum(t["pnl_pct"] for t in group) / len(group),
+            }
+    result["by_hold_period"] = by_hold
+
+    # By sector
+    by_sector: dict[str, list] = {}
+    for r in round_trips:
+        by_sector.setdefault(r["sector"], []).append(r)
+    result["by_sector"] = {
+        sector: {
+            "count": len(trades),
+            "win_rate": sum(1 for t in trades if t["pnl_pct"] > 0) / len(trades) * 100,
+            "avg_pnl": sum(t["pnl_pct"] for t in trades) / len(trades),
+        }
+        for sector, trades in by_sector.items()
+    }
+
+    # Recent streak
+    recent = round_trips[-10:]
+    streak_dir = "winning" if recent[-1]["pnl_pct"] > 0 else "losing"
+    streak_len = 1
+    for r in reversed(recent[:-1]):
+        if (r["pnl_pct"] > 0) == (streak_dir == "winning"):
+            streak_len += 1
+        else:
+            break
+    result["streak"] = {"direction": streak_dir, "length": streak_len}
+
+    return result
+
+
+def _compute_dynamic_risk(db, user_id: str) -> dict | None:
+    """Compute drawdown-aware risk adjustments from portfolio snapshots."""
+    snap_resp = (
+        db.table("portfolio_snapshots")
+        .select("snapshot_date, total_value")
+        .eq("user_id", user_id)
+        .order("snapshot_date", desc=False)
+        .execute()
+    )
+    snaps = snap_resp.data if snap_resp.data else []
+    if len(snaps) < 3:
+        return None
+
+    values = [s["total_value"] for s in snaps]
+    current = values[-1]
+    peak = max(values)
+    dd_pct = ((peak - current) / peak) * 100 if peak > 0 else 0
+
+    # Find drawdown duration
+    peak_idx = values.index(peak)
+    dd_days = len(values) - 1 - peak_idx if peak_idx < len(values) - 1 else 0
+
+    # Size multiplier: scale down in drawdown
+    if dd_pct < 1:
+        multiplier = 1.0
+    elif dd_pct < 3:
+        multiplier = 0.85
+    elif dd_pct < 5:
+        multiplier = 0.70
+    elif dd_pct < 10:
+        multiplier = 0.50
+    else:
+        multiplier = 0.30
+
+    # Recent 5-day trend
+    if len(values) >= 6:
+        recent_5d = ((values[-1] / values[-6]) - 1) * 100
+    elif len(values) >= 2:
+        recent_5d = ((values[-1] / values[0]) - 1) * 100
+    else:
+        recent_5d = 0
+
+    if recent_5d > 0.5:
+        trend = "recovering"
+    elif recent_5d < -0.5:
+        trend = "declining"
+    else:
+        trend = "flat"
+
+    return {
+        "peak_value": peak,
+        "current_value": current,
+        "drawdown_pct": round(dd_pct, 1),
+        "drawdown_days": dd_days,
+        "size_multiplier": round(multiplier, 2),
+        "equity_trend": trend,
+        "recent_5d_return": round(recent_5d, 1),
+    }
 
 
 def _format_cross_trader_positions(
@@ -1606,6 +1806,22 @@ async def _run_trader(
         if performance_intel:
             perf_intel_text = performance_intel.get(user_id, "")
 
+        # Trade context (historical track record — only if module active)
+        trade_context = None
+        if "trade_context" in toolkit_modules:
+            try:
+                trade_context = _compute_trade_context(db, user_id)
+            except Exception:
+                pass
+
+        # Dynamic risk (drawdown-aware sizing — only if module active)
+        dynamic_risk = None
+        if "dynamic_risk" in toolkit_modules:
+            try:
+                dynamic_risk = _compute_dynamic_risk(db, user_id)
+            except Exception:
+                pass
+
         # Ask AI for trades (with modular toolkit prompt)
         agentic_data = {
             "pattern_results": pattern_results,
@@ -1614,6 +1830,8 @@ async def _run_trader(
             "sizing": sizing,
             "cross_trader_text": cross_trader_text,
             "performance_intel": perf_intel_text,
+            "trade_context": trade_context,
+            "dynamic_risk": dynamic_risk,
         }
         trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 

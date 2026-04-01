@@ -74,6 +74,27 @@ RAG_MODULES: dict[str, dict] = {
         "icon": "calculator",
         "color": "indigo",
     },
+    "signal_ranker": {
+        "label": "Signal Ranker",
+        "description": "Composite scoring that synthesizes technicals, fundamentals, sentiment, and momentum into ranked asset scores with conflict analysis",
+        "always_included": False,
+        "icon": "bar-chart",
+        "color": "orange",
+    },
+    "trade_context": {
+        "label": "Trade Context",
+        "description": "Your historical track record: win rates by sector, asset type, and holding period from your own past trades",
+        "always_included": False,
+        "icon": "history",
+        "color": "cyan",
+    },
+    "dynamic_risk": {
+        "label": "Dynamic Risk",
+        "description": "Drawdown-aware position sizing that scales exposure based on your equity curve and recent performance",
+        "always_included": False,
+        "icon": "shield-alert",
+        "color": "pink",
+    },
 }
 
 
@@ -89,6 +110,9 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "momentum": ["momentum", "gainer", "loser", "volume spike", "relative volume"],
     "macro": ["regime", "sector rotation", "spy", "safe haven", "small cap", "rate"],
     "optimizer": ["correlation", "concentration", "rebalance", "allocation", "optimizer", "diversif"],
+    "signal_ranker": ["composite", "ranked", "data synthesis", "score", "signal rank", "conflict"],
+    "trade_context": ["track record", "win rate", "historical", "past trades", "my history", "streak"],
+    "dynamic_risk": ["drawdown", "equity curve", "size multiplier", "defensive", "capital preservation"],
 }
 
 
@@ -743,6 +767,389 @@ def _format_stocks_by_sector() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Module: Signal Ranker — composite data synthesis
+# ---------------------------------------------------------------------------
+
+def _compute_asset_scores(brief: dict) -> list[dict]:
+    """Combine technicals, fundamentals, sentiment, momentum into a composite
+    score per asset.  Returns sorted list of {symbol, score, factors, conflicts}."""
+
+    results = []
+
+    # --- Stocks ---
+    stock_technicals = brief.get("stock_technicals", {})
+    fundamentals = brief.get("fundamentals", {})
+    sentiment_data = brief.get("sentiment_scores", {})
+    analyst_recs = brief.get("analyst_recommendations", {})
+    insider_txns = brief.get("insider_transactions", {})
+    volatility = brief.get("stock_volatility", {})
+
+    by_symbol_sent = sentiment_data.get("by_symbol", {}) if sentiment_data else {}
+
+    for sym in set(list(stock_technicals.keys()) + list(fundamentals.keys())):
+        score = 0
+        factors = []
+        conflicts = []
+        tech = stock_technicals.get(sym, {})
+        fund = fundamentals.get(sym, {})
+
+        # Technical component (max ±40)
+        rsi = tech.get("rsi_14")
+        if rsi is not None:
+            if rsi < 30:
+                s = 15
+                factors.append(f"RSI {rsi:.0f} (oversold)")
+            elif rsi > 70:
+                s = -15
+                conflicts.append(f"RSI {rsi:.0f} (overbought)")
+            else:
+                s = 0
+            score += s
+
+        sig = tech.get("signal", {})
+        if sig.get("score"):
+            sig_score = sig["score"]
+            # Normalize from ~(-100,+100) to (-15,+15)
+            s = max(-15, min(15, sig_score // 7))
+            score += s
+            label = sig.get("label", "")
+            if s > 5:
+                factors.append(f"signal {label} ({sig_score:+d})")
+            elif s < -5:
+                conflicts.append(f"signal {label} ({sig_score:+d})")
+
+        vs_sma20 = tech.get("vs_sma_20")
+        vs_sma50 = tech.get("vs_sma_50")
+        if vs_sma20 is not None and vs_sma50 is not None:
+            if vs_sma20 > 0 and vs_sma50 > 0:
+                score += 10
+                factors.append("above SMA20/50")
+            elif vs_sma20 < 0 and vs_sma50 < 0:
+                score -= 10
+                conflicts.append("below SMA20/50")
+
+        # Fundamental component (max ±30)
+        rec = analyst_recs.get(sym, {})
+        if rec:
+            total = rec.get("buy", 0) + rec.get("hold", 0) + rec.get("sell", 0)
+            if total > 0:
+                buy_pct = rec["buy"] / total
+                if buy_pct > 0.7:
+                    score += 10
+                    factors.append(f"analyst Strong Buy ({buy_pct:.0%})")
+                elif buy_pct < 0.3:
+                    score -= 10
+                    conflicts.append(f"analyst bearish ({buy_pct:.0%} buy)")
+
+        insider = insider_txns.get(sym, [])
+        if insider:
+            buys = sum(t["value"] for t in insider if t["side"] == "buy")
+            sells = sum(t["value"] for t in insider if t["side"] == "sell")
+            if buys > sells * 2 and buys > 100_000:
+                score += 10
+                factors.append(f"insider buying ${buys / 1e6:.1f}M")
+            elif sells > buys * 2 and sells > 100_000:
+                score -= 10
+                conflicts.append(f"insider selling ${sells / 1e6:.1f}M")
+
+        # Sentiment component (max ±20)
+        sym_sent = by_symbol_sent.get(sym, {})
+        if sym_sent.get("score") is not None:
+            sent_s = sym_sent["score"]
+            s = max(-20, min(20, int(sent_s * 40)))
+            score += s
+            if s > 5:
+                factors.append(f"sentiment {sent_s:+.2f}")
+            elif s < -5:
+                conflicts.append(f"sentiment {sent_s:+.2f}")
+
+        # Momentum component (max ±10)
+        ret_7d = tech.get("7d_return")
+        if ret_7d is not None:
+            if ret_7d > 2:
+                score += 5
+                factors.append(f"7d {ret_7d:+.1f}%")
+            elif ret_7d < -2:
+                score -= 5
+                conflicts.append(f"7d {ret_7d:+.1f}%")
+
+        rel_vol = tech.get("relative_volume")
+        if rel_vol is not None:
+            if rel_vol > 1.5:
+                factors.append(f"volume {rel_vol:.1f}x (high)")
+            elif rel_vol < 0.5:
+                conflicts.append(f"volume {rel_vol:.1f}x (thin)")
+
+        sector = STOCK_SECTORS.get(sym, "")
+        vol = volatility.get(sym)
+        vol_str = f", vol {vol}%" if vol else ""
+
+        if factors or conflicts:
+            results.append({
+                "symbol": sym,
+                "asset_type": "stock",
+                "score": score,
+                "sector": sector,
+                "vol": vol_str,
+                "factors": factors,
+                "conflicts": conflicts,
+            })
+
+    # --- Crypto ---
+    crypto_tech = brief.get("crypto_technicals", {})
+    crypto_market = brief.get("crypto_market_data", {})
+    for sym in crypto_tech:
+        score = 0
+        factors = []
+        conflicts = []
+        tech = crypto_tech[sym]
+
+        rsi = tech.get("rsi_14")
+        if rsi is not None:
+            if rsi < 30:
+                score += 15
+                factors.append(f"RSI {rsi:.0f} (oversold)")
+            elif rsi > 70:
+                score -= 15
+                conflicts.append(f"RSI {rsi:.0f} (overbought)")
+
+        sig = tech.get("signal", {})
+        if sig.get("score"):
+            s = max(-15, min(15, sig["score"] // 7))
+            score += s
+            label = sig.get("label", "")
+            if s > 5:
+                factors.append(f"signal {label} ({sig['score']:+d})")
+            elif s < -5:
+                conflicts.append(f"signal {label} ({sig['score']:+d})")
+
+        vs_sma20 = tech.get("vs_sma_20")
+        vs_sma50 = tech.get("vs_sma_50")
+        if vs_sma20 is not None and vs_sma50 is not None:
+            if vs_sma20 > 0 and vs_sma50 > 0:
+                score += 10
+                factors.append("above SMA20/50")
+            elif vs_sma20 < 0 and vs_sma50 < 0:
+                score -= 10
+                conflicts.append("below SMA20/50")
+
+        ret_7d = tech.get("7d_return")
+        if ret_7d is not None:
+            if ret_7d > 3:
+                score += 5
+                factors.append(f"7d {ret_7d:+.1f}%")
+            elif ret_7d < -3:
+                score -= 5
+                conflicts.append(f"7d {ret_7d:+.1f}%")
+
+        # Crypto-specific: ATH distance
+        cm = crypto_market.get(sym, {})
+        ath_drop = cm.get("ath_drop_pct")
+        if ath_drop is not None and ath_drop > 50:
+            score += 5
+            factors.append(f"{ath_drop}% below ATH")
+
+        sym_sent = by_symbol_sent.get(sym, {})
+        if sym_sent.get("score") is not None:
+            s = max(-20, min(20, int(sym_sent["score"] * 40)))
+            score += s
+            if s > 5:
+                factors.append(f"sentiment {sym_sent['score']:+.2f}")
+            elif s < -5:
+                conflicts.append(f"sentiment {sym_sent['score']:+.2f}")
+
+        if factors or conflicts:
+            results.append({
+                "symbol": sym,
+                "asset_type": "crypto",
+                "score": score,
+                "sector": "Crypto",
+                "vol": "",
+                "factors": factors,
+                "conflicts": conflicts,
+            })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+
+def _format_signal_ranker(brief: dict) -> str:
+    """Format composite signal scores with anti-convergence framing."""
+    scored = _compute_asset_scores(brief)
+    if not scored:
+        return ""
+
+    lines = [
+        "### COMPOSITE DATA SYNTHESIS",
+        "This section combines technicals, fundamentals, sentiment, and momentum",
+        "into a single view per asset. These scores reflect what the DATA shows,",
+        "not what you should DO. A contrarian seeing +80 may correctly sell (crowded",
+        "trade). A momentum trader may correctly buy. A value investor may ignore it",
+        "entirely if the PE doesn't fit. INTERPRET THROUGH YOUR OWN STRATEGY.",
+        "",
+        "Scores range from roughly -100 (bearish data) to +100 (bullish data).",
+        "Conflicting signals are listed — these are often MORE informative than",
+        "the score itself. A stock at +60 with zero conflicts is different from",
+        "one at +60 with three strong bearish flags that happen to be outweighed.",
+        "",
+    ]
+
+    # Separate stocks and crypto
+    stocks = [s for s in scored if s["asset_type"] == "stock"]
+    crypto = [s for s in scored if s["asset_type"] == "crypto"]
+
+    if stocks:
+        lines.append("[Stocks — ranked by data alignment]")
+        for s in stocks[:20]:
+            score = s["score"]
+            sym = s["symbol"]
+            sector = s["sector"]
+            vol = s["vol"]
+            factor_str = " | ".join(s["factors"]) if s["factors"] else "no strong bullish signals"
+            lines.append(f"  {sym} ({score:+d}) [{sector}{vol}]: {factor_str}")
+            if s["conflicts"]:
+                conflict_str = " | ".join(s["conflicts"])
+                lines.append(f"    ^ Conflicts: {conflict_str}")
+        lines.append("")
+
+    if crypto:
+        lines.append("[Crypto — ranked by data alignment]")
+        for s in crypto[:15]:
+            score = s["score"]
+            sym = s["symbol"]
+            factor_str = " | ".join(s["factors"]) if s["factors"] else "no strong bullish signals"
+            lines.append(f"  {sym} ({score:+d}): {factor_str}")
+            if s["conflicts"]:
+                conflict_str = " | ".join(s["conflicts"])
+                lines.append(f"    ^ Conflicts: {conflict_str}")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Module: Trade Context — historical lookback from own trades
+# ---------------------------------------------------------------------------
+
+def _format_trade_context(ctx: dict) -> str:
+    """Compute trading track record statistics from trader's own history.
+    Shows what has worked and what hasn't for THIS specific trader."""
+    trade_stats = ctx.get("trade_context")
+    if not trade_stats:
+        return ""
+
+    lines = [
+        "### YOUR HISTORICAL TRACK RECORD",
+        "Statistics from your own past trades. Use this as a mirror — what patterns",
+        "in YOUR behavior led to wins vs losses? This is YOUR data, not general advice.",
+        "",
+    ]
+
+    # Overall stats
+    total_sells = trade_stats.get("total_round_trips", 0)
+    if total_sells == 0:
+        lines.append("  Not enough completed trades for statistical analysis yet.")
+        return "\n".join(lines)
+
+    win_rate = trade_stats.get("win_rate", 0)
+    avg_win = trade_stats.get("avg_win_pct", 0)
+    avg_loss = trade_stats.get("avg_loss_pct", 0)
+    lines.append(f"  Overall: {total_sells} round-trips, {win_rate:.0f}% win rate")
+    lines.append(f"  Avg winner: +{avg_win:.1f}% | Avg loser: {avg_loss:.1f}%")
+
+    # By asset type
+    by_type = trade_stats.get("by_asset_type", {})
+    if len(by_type) > 1:
+        lines.append("")
+        lines.append("  By asset type:")
+        for atype, stats in by_type.items():
+            wr = stats["win_rate"]
+            label = atype.capitalize()
+            lines.append(f"    {label}: {stats['count']} trades, {wr:.0f}% win rate, avg P&L {stats['avg_pnl']:+.1f}%")
+
+    # By holding period
+    by_hold = trade_stats.get("by_hold_period", {})
+    if by_hold:
+        lines.append("")
+        lines.append("  By holding period:")
+        for period, stats in by_hold.items():
+            lines.append(f"    {period}: {stats['count']} trades, {stats['win_rate']:.0f}% win rate, avg P&L {stats['avg_pnl']:+.1f}%")
+
+    # By sector (stocks only)
+    by_sector = trade_stats.get("by_sector", {})
+    if by_sector:
+        lines.append("")
+        lines.append("  By sector (strongest → weakest):")
+        for sector, stats in sorted(by_sector.items(), key=lambda x: x[1]["avg_pnl"], reverse=True):
+            if stats["count"] >= 2:
+                lines.append(f"    {sector}: {stats['count']} trades, {stats['win_rate']:.0f}% win, avg {stats['avg_pnl']:+.1f}%")
+
+    # Recent streak
+    streak = trade_stats.get("streak", {})
+    if streak.get("length", 0) >= 2:
+        direction = streak["direction"]  # "winning" or "losing"
+        length = streak["length"]
+        if direction == "losing" and length >= 3:
+            lines.append(f"\n  ** {length}-trade losing streak. Consider reducing position sizes until confidence returns.")
+        elif direction == "winning" and length >= 3:
+            lines.append(f"\n  {length}-trade winning streak. Stay disciplined — don't let confidence become overconfidence.")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Module: Dynamic Risk — drawdown-aware position sizing
+# ---------------------------------------------------------------------------
+
+def _format_dynamic_risk(ctx: dict) -> str:
+    """Format drawdown-aware risk adjustments based on portfolio equity curve."""
+    risk_data = ctx.get("dynamic_risk")
+    if not risk_data:
+        return ""
+
+    lines = [
+        "### DYNAMIC RISK ADJUSTMENT (based on your equity curve)",
+        "Your recent performance affects how much risk you should take today.",
+        "These are guardrails, not commands — but ignoring drawdown risk is how",
+        "small losses become large ones.",
+        "",
+    ]
+
+    peak = risk_data.get("peak_value", 100_000)
+    current = risk_data.get("current_value", 100_000)
+    dd_pct = risk_data.get("drawdown_pct", 0)
+    dd_days = risk_data.get("drawdown_days", 0)
+    multiplier = risk_data.get("size_multiplier", 1.0)
+    trend = risk_data.get("equity_trend", "flat")
+    recent_return = risk_data.get("recent_5d_return", 0)
+
+    # Equity state
+    if dd_pct < 1:
+        lines.append(f"  Equity state: NEAR PEAK (${current:,.0f}, peak ${peak:,.0f})")
+        lines.append(f"  Position sizing: FULL (1.0x) — no drawdown adjustment needed")
+    elif dd_pct < 5:
+        lines.append(f"  Equity state: MILD DRAWDOWN (-{dd_pct:.1f}% from ${peak:,.0f} peak, {dd_days}d)")
+        lines.append(f"  Position sizing: REDUCED ({multiplier:.2f}x) — preserve capital while drawdown persists")
+    elif dd_pct < 10:
+        lines.append(f"  Equity state: MODERATE DRAWDOWN (-{dd_pct:.1f}% from ${peak:,.0f} peak, {dd_days}d)")
+        lines.append(f"  Position sizing: DEFENSIVE ({multiplier:.2f}x) — focus on high-conviction trades only")
+        lines.append(f"  Consider: fewer positions, tighter stops, higher cash allocation")
+    else:
+        lines.append(f"  Equity state: SEVERE DRAWDOWN (-{dd_pct:.1f}% from ${peak:,.0f} peak, {dd_days}d)")
+        lines.append(f"  Position sizing: MINIMAL ({multiplier:.2f}x) — capital preservation is priority")
+        lines.append(f"  Reduce exposure. Do not try to 'make it back' with larger bets.")
+
+    # Trend context
+    if trend == "recovering":
+        lines.append(f"  Trend: RECOVERING (5d return {recent_return:+.1f}%) — drawdown may be ending")
+    elif trend == "declining":
+        lines.append(f"  Trend: DECLINING (5d return {recent_return:+.1f}%) — conditions worsening")
+    elif trend == "flat":
+        lines.append(f"  Trend: FLAT (5d return {recent_return:+.1f}%) — no clear direction")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Formatter dispatch table
 # ---------------------------------------------------------------------------
 
@@ -758,6 +1165,9 @@ _MODULE_FORMATTERS = {
         ctx.get("allocation", {}),
         ctx.get("sizing"),
     ),
+    "signal_ranker": lambda ctx: _format_signal_ranker(ctx["brief"]),
+    "trade_context": lambda ctx: _format_trade_context(ctx),
+    "dynamic_risk": lambda ctx: _format_dynamic_risk(ctx),
 }
 
 
