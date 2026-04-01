@@ -1004,7 +1004,7 @@ async def compile_market_brief() -> dict:
     # Social sentiment uses StockTwits (separate API) — safe to run in parallel
     social_symbols = [m["symbol"] for m in (movers_up[:5] + movers_down[:5])]
 
-    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending = (
+    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending, options_flow, yield_curve = (
         await asyncio.gather(
             _finnhub_enrichment(),
             _compute_stock_technicals(top_symbols),
@@ -1013,6 +1013,8 @@ async def compile_market_brief() -> dict:
             _fetch_crypto_global(),
             _fetch_crypto_categories(),
             _fetch_crypto_trending(),
+            _fetch_options_flow(),
+            _fetch_yield_curve(),
         )
     )
 
@@ -1069,6 +1071,8 @@ async def compile_market_brief() -> dict:
         "crypto_global": crypto_global,
         "crypto_categories": crypto_categories,
         "crypto_trending": crypto_trending,
+        "options_flow": options_flow,
+        "yield_curve": yield_curve,
     }
 
     # Compute day-over-day after regime/sectors are set
@@ -1083,6 +1087,175 @@ async def compile_market_brief() -> dict:
     ).execute()
 
     return brief
+
+
+# ---------------------------------------------------------------------------
+# Options Flow: CBOE put/call ratio (free, no API key)
+# ---------------------------------------------------------------------------
+
+async def _fetch_options_flow() -> dict | None:
+    """Fetch CBOE equity and index put/call ratios.
+    Uses the CBOE daily market statistics page (public JSON endpoint).
+    High put/call (>1.0) = bearish hedging / fear. Low (<0.7) = complacency.
+    This is one of the most-watched institutional sentiment indicators."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            # CBOE publishes daily P/C ratios as a public JSON feed
+            resp = await client.get(
+                "https://cdn.cboe.com/api/global/us_indices/market_statistics/daily/put-call-ratio.json",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            if resp.status_code != 200:
+                return None
+            rows = resp.json()
+            if not rows or not isinstance(rows, list):
+                return None
+
+            # Rows are sorted most-recent-first; take the last few days
+            recent = rows[:5]
+            latest = recent[0]
+
+            # Extract the three ratios CBOE provides
+            equity_pc = latest.get("EQUITY_PUT_CALL_RATIO")
+            index_pc = latest.get("INDEX_PUT_CALL_RATIO")
+            total_pc = latest.get("TOTAL_PUT_CALL_RATIO")
+
+            result: dict = {"date": latest.get("TRADE_DATE", "")}
+
+            if total_pc is not None:
+                total_pc = float(total_pc)
+                result["total_put_call"] = round(total_pc, 3)
+                if total_pc > 1.1:
+                    result["total_signal"] = "EXTREME_FEAR"
+                elif total_pc > 0.9:
+                    result["total_signal"] = "BEARISH_HEDGING"
+                elif total_pc < 0.65:
+                    result["total_signal"] = "EXTREME_COMPLACENCY"
+                elif total_pc < 0.8:
+                    result["total_signal"] = "BULLISH_CONFIDENCE"
+                else:
+                    result["total_signal"] = "NEUTRAL"
+
+            if equity_pc is not None:
+                result["equity_put_call"] = round(float(equity_pc), 3)
+            if index_pc is not None:
+                result["index_put_call"] = round(float(index_pc), 3)
+
+            # 5-day trend (are puts increasing or decreasing?)
+            if len(recent) >= 3:
+                totals = [float(r.get("TOTAL_PUT_CALL_RATIO", 0)) for r in recent if r.get("TOTAL_PUT_CALL_RATIO")]
+                if len(totals) >= 3:
+                    avg_recent = sum(totals[:2]) / 2
+                    avg_prior = sum(totals[2:]) / max(len(totals[2:]), 1)
+                    if avg_prior > 0:
+                        trend_chg = round((avg_recent / avg_prior - 1) * 100, 1)
+                        result["trend_pct"] = trend_chg
+                        if trend_chg > 10:
+                            result["trend"] = "PUTS_INCREASING"
+                        elif trend_chg < -10:
+                            result["trend"] = "PUTS_DECREASING"
+                        else:
+                            result["trend"] = "STABLE"
+
+            return result
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Yield Curve: FRED Treasury rates (free, requires API key)
+# ---------------------------------------------------------------------------
+
+FRED_BASE = "https://api.stlouisfed.org/fred"
+FRED_SERIES = {
+    "DGS2": "2Y",    # 2-year Treasury
+    "DGS10": "10Y",  # 10-year Treasury
+    "DGS30": "30Y",  # 30-year Treasury
+    "DFF": "Fed Funds",  # Effective Federal Funds Rate
+}
+
+
+async def _fetch_yield_curve() -> dict | None:
+    """Fetch Treasury yields from FRED (Federal Reserve Economic Data).
+    Free API, requires FRED_API_KEY env var. Computes yield curve slope
+    (10Y - 2Y spread) — the most-watched recession indicator.
+    Inverted curve (negative spread) has preceded every US recession since 1970."""
+    settings = get_settings()
+    fred_key = getattr(settings, "fred_api_key", "")
+    if not fred_key:
+        return None
+
+    try:
+        results: dict = {}
+        async with httpx.AsyncClient(timeout=15) as client:
+            for series_id, label in FRED_SERIES.items():
+                resp = await client.get(
+                    f"{FRED_BASE}/series/observations",
+                    params={
+                        "series_id": series_id,
+                        "api_key": fred_key,
+                        "file_type": "json",
+                        "sort_order": "desc",
+                        "limit": 5,
+                    },
+                )
+                if resp.status_code != 200:
+                    continue
+                obs = resp.json().get("observations", [])
+                # FRED sometimes returns "." for missing data
+                for o in obs:
+                    val = o.get("value", ".")
+                    if val != ".":
+                        results[label] = {
+                            "rate": round(float(val), 3),
+                            "date": o.get("date", ""),
+                        }
+                        break
+
+        if not results:
+            return None
+
+        curve: dict = {"rates": results}
+
+        # Compute the 10Y-2Y spread (THE yield curve indicator)
+        rate_2y = results.get("2Y", {}).get("rate")
+        rate_10y = results.get("10Y", {}).get("rate")
+        if rate_2y is not None and rate_10y is not None:
+            spread = round(rate_10y - rate_2y, 3)
+            curve["spread_10y_2y"] = spread
+            if spread < -0.5:
+                curve["curve_signal"] = "DEEPLY_INVERTED"
+                curve["recession_risk"] = "ELEVATED"
+            elif spread < 0:
+                curve["curve_signal"] = "INVERTED"
+                curve["recession_risk"] = "ABOVE_AVERAGE"
+            elif spread < 0.5:
+                curve["curve_signal"] = "FLAT"
+                curve["recession_risk"] = "MODERATE"
+            else:
+                curve["curve_signal"] = "NORMAL"
+                curve["recession_risk"] = "LOW"
+
+        # Compute 30Y-10Y spread (term premium)
+        rate_30y = results.get("30Y", {}).get("rate")
+        if rate_30y is not None and rate_10y is not None:
+            curve["spread_30y_10y"] = round(rate_30y - rate_10y, 3)
+
+        # Fed Funds context
+        ff = results.get("Fed Funds", {}).get("rate")
+        if ff is not None and rate_2y is not None:
+            # If 2Y is below Fed Funds, market expects rate cuts
+            ff_spread = round(rate_2y - ff, 3)
+            if ff_spread < -0.25:
+                curve["rate_expectation"] = "CUTS_EXPECTED"
+            elif ff_spread > 0.25:
+                curve["rate_expectation"] = "HIKES_EXPECTED"
+            else:
+                curve["rate_expectation"] = "ON_HOLD"
+
+        return curve
+    except Exception:
+        return None
 
 
 async def get_latest_brief() -> dict | None:

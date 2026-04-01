@@ -95,6 +95,20 @@ RAG_MODULES: dict[str, dict] = {
         "icon": "shield-alert",
         "color": "pink",
     },
+    "options_flow": {
+        "label": "Options Flow",
+        "description": "CBOE put/call ratios showing institutional hedging activity — a leading indicator of market fear or complacency",
+        "always_included": False,
+        "icon": "layers",
+        "color": "violet",
+    },
+    "yield_curve": {
+        "label": "Yield Curve",
+        "description": "Treasury yield spreads and Fed Funds rate — the most-watched recession and rate expectation indicators",
+        "always_included": False,
+        "icon": "git-branch",
+        "color": "emerald",
+    },
 }
 
 
@@ -113,6 +127,8 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "signal_ranker": ["composite", "ranked", "data synthesis", "score", "signal rank", "conflict"],
     "trade_context": ["track record", "win rate", "historical", "past trades", "my history", "streak"],
     "dynamic_risk": ["drawdown", "equity curve", "size multiplier", "defensive", "capital preservation"],
+    "options_flow": ["put/call", "put call", "options", "hedging", "complacency", "cboe", "institutional fear"],
+    "yield_curve": ["yield curve", "treasury", "2y", "10y", "spread", "inverted", "recession", "fed funds", "rate cut", "rate hike"],
 }
 
 
@@ -1149,6 +1165,119 @@ def _format_dynamic_risk(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_options_flow(brief: dict) -> str:
+    """CBOE put/call ratios — institutional hedging activity."""
+    flow = brief.get("options_flow")
+    if not flow:
+        return ""
+
+    lines = [
+        "### Options Flow (CBOE Put/Call Ratios)",
+        "NOTE: These ratios reflect aggregate options positioning across the market. "
+        "They are a SENTIMENT indicator, not a directional instruction. "
+        "Different strategies interpret high put/call ratios differently — "
+        "a momentum trader sees fear as a warning, while a contrarian sees it as opportunity. "
+        "Apply YOUR strategy's logic.",
+    ]
+
+    total = flow.get("total_put_call")
+    if total is not None:
+        signal = flow.get("total_signal", "NEUTRAL")
+        lines.append(f"  Total put/call ratio: {total:.3f} ({signal})")
+        # Context for interpretation
+        if signal == "EXTREME_FEAR":
+            lines.append("  Context: Ratio above 1.1 — heavy put buying. Historically, extreme fear readings "
+                         "have occurred both before further declines AND before sharp reversals. "
+                         "The data alone does not tell you which.")
+        elif signal == "EXTREME_COMPLACENCY":
+            lines.append("  Context: Ratio below 0.65 — very little hedging. Historically, low put/call "
+                         "readings have preceded both continued rallies AND sudden corrections. "
+                         "The data alone does not tell you which.")
+        elif signal == "BEARISH_HEDGING":
+            lines.append("  Context: Elevated put buying suggests institutional caution.")
+        elif signal == "BULLISH_CONFIDENCE":
+            lines.append("  Context: Low put activity suggests market participants are not hedging aggressively.")
+
+    equity = flow.get("equity_put_call")
+    index = flow.get("index_put_call")
+    if equity is not None:
+        lines.append(f"  Equity P/C: {equity:.3f} (individual stocks)")
+    if index is not None:
+        lines.append(f"  Index P/C: {index:.3f} (broad market hedges)")
+    if equity is not None and index is not None and equity > 0:
+        # Index-to-equity divergence is meaningful
+        ratio = round(index / equity, 2)
+        if ratio > 1.5:
+            lines.append(f"  Index/Equity divergence: {ratio}x — institutions hedging macro risk more than stock-specific")
+        elif ratio < 0.6:
+            lines.append(f"  Index/Equity divergence: {ratio}x — stock-specific hedging outpacing macro hedging")
+
+    trend = flow.get("trend")
+    trend_pct = flow.get("trend_pct")
+    if trend and trend_pct is not None:
+        lines.append(f"  Multi-day trend: {trend} ({trend_pct:+.1f}% vs prior days)")
+
+    return "\n".join(lines)
+
+
+def _format_yield_curve(brief: dict) -> str:
+    """Treasury yields and curve shape — rate and recession indicators."""
+    curve = brief.get("yield_curve")
+    if not curve:
+        return ""
+
+    lines = [
+        "### Yield Curve & Interest Rates",
+        "NOTE: The yield curve is one of the most reliable macro indicators, but its signals "
+        "play out over months to years, not days. An inverted curve preceded every US recession "
+        "since 1970, but the lag between inversion and recession ranges from 6 to 24 months. "
+        "Use this as a backdrop for your strategy, not as a daily trading signal.",
+    ]
+
+    rates = curve.get("rates", {})
+    if rates:
+        rate_parts = []
+        for label in ["Fed Funds", "2Y", "10Y", "30Y"]:
+            info = rates.get(label)
+            if info:
+                rate_parts.append(f"{label}: {info['rate']:.3f}%")
+        if rate_parts:
+            lines.append(f"  Current rates: {' | '.join(rate_parts)}")
+
+    spread = curve.get("spread_10y_2y")
+    if spread is not None:
+        signal = curve.get("curve_signal", "UNKNOWN")
+        recession = curve.get("recession_risk", "UNKNOWN")
+        lines.append(f"  10Y-2Y spread: {spread:+.3f}% ({signal})")
+        lines.append(f"  Recession risk indicator: {recession}")
+        if signal == "DEEPLY_INVERTED":
+            lines.append("  Context: Deeply inverted curve. Historically this has preceded recessions, "
+                         "but the timing is uncertain and markets can rally for months during inversions.")
+        elif signal == "INVERTED":
+            lines.append("  Context: Mildly inverted. Bond market is pricing in economic slowdown or rate cuts.")
+        elif signal == "FLAT":
+            lines.append("  Context: Flat curve suggests uncertainty about economic direction.")
+
+    spread_30_10 = curve.get("spread_30y_10y")
+    if spread_30_10 is not None:
+        lines.append(f"  30Y-10Y spread: {spread_30_10:+.3f}% (term premium)")
+
+    rate_exp = curve.get("rate_expectation")
+    if rate_exp:
+        if rate_exp == "CUTS_EXPECTED":
+            lines.append("  Bond market pricing: RATE CUTS expected (2Y below Fed Funds)")
+            lines.append("  Implication: Falling rates tend to support growth stocks and crypto. "
+                         "But cuts also signal the Fed sees economic weakness.")
+        elif rate_exp == "HIKES_EXPECTED":
+            lines.append("  Bond market pricing: RATE HIKES expected (2Y above Fed Funds)")
+            lines.append("  Implication: Rising rates tend to pressure growth/speculative assets. "
+                         "But hikes also signal a strong economy.")
+        else:
+            lines.append("  Bond market pricing: Rates ON HOLD (2Y near Fed Funds)")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Formatter dispatch table
 # ---------------------------------------------------------------------------
@@ -1168,6 +1297,8 @@ _MODULE_FORMATTERS = {
     "signal_ranker": lambda ctx: _format_signal_ranker(ctx["brief"]),
     "trade_context": lambda ctx: _format_trade_context(ctx),
     "dynamic_risk": lambda ctx: _format_dynamic_risk(ctx),
+    "options_flow": lambda ctx: _format_options_flow(ctx["brief"]),
+    "yield_curve": lambda ctx: _format_yield_curve(ctx["brief"]),
 }
 
 

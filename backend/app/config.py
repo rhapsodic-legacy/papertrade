@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     mistral_api_key_3: str = ""
     cerebras_api_key: str = ""
     groq_api_key: str = ""
+    fred_api_key: str = ""
     starting_balance: float = 100_000.00
 
     model_config = {"env_file": ".env"}
