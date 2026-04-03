@@ -1090,72 +1090,73 @@ async def compile_market_brief() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Options Flow: CBOE put/call ratio (free, no API key)
+# Options Flow: VIX-based volatility and fear gauge (Yahoo Finance, free)
 # ---------------------------------------------------------------------------
 
 async def _fetch_options_flow() -> dict | None:
-    """Fetch CBOE equity and index put/call ratios.
-    Uses the CBOE daily market statistics page (public JSON endpoint).
-    High put/call (>1.0) = bearish hedging / fear. Low (<0.7) = complacency.
-    This is one of the most-watched institutional sentiment indicators."""
+    """Fetch VIX (CBOE Volatility Index) data from Yahoo Finance.
+    VIX measures expected 30-day S&P 500 volatility derived from options prices.
+    It IS the options market's consensus fear level — the same signal that
+    put/call ratios approximate, but more direct and reliable.
+    VIX > 30 = extreme fear, < 15 = complacency. Mean ~20."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            # CBOE publishes daily P/C ratios as a public JSON feed
             resp = await client.get(
-                "https://cdn.cboe.com/api/global/us_indices/market_statistics/daily/put-call-ratio.json",
+                "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX",
+                params={"range": "10d", "interval": "1d"},
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             if resp.status_code != 200:
                 return None
-            rows = resp.json()
-            if not rows or not isinstance(rows, list):
+            data = resp.json()
+            result_data = data.get("chart", {}).get("result", [{}])[0]
+            closes = result_data.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+            timestamps = result_data.get("timestamp", [])
+
+            # Filter out None values
+            valid = [(t, c) for t, c in zip(timestamps, closes) if c is not None]
+            if not valid:
                 return None
 
-            # Rows are sorted most-recent-first; take the last few days
-            recent = rows[:5]
-            latest = recent[0]
+            latest_vix = round(valid[-1][1], 2)
+            result: dict = {"vix": latest_vix, "source": "CBOE VIX via Yahoo Finance"}
 
-            # Extract the three ratios CBOE provides
-            equity_pc = latest.get("EQUITY_PUT_CALL_RATIO")
-            index_pc = latest.get("INDEX_PUT_CALL_RATIO")
-            total_pc = latest.get("TOTAL_PUT_CALL_RATIO")
+            # Classification (standard VIX interpretation)
+            if latest_vix >= 35:
+                result["signal"] = "EXTREME_FEAR"
+            elif latest_vix >= 25:
+                result["signal"] = "ELEVATED_FEAR"
+            elif latest_vix >= 20:
+                result["signal"] = "CAUTIOUS"
+            elif latest_vix >= 15:
+                result["signal"] = "NEUTRAL"
+            elif latest_vix >= 12:
+                result["signal"] = "COMPLACENT"
+            else:
+                result["signal"] = "EXTREME_COMPLACENCY"
 
-            result: dict = {"date": latest.get("TRADE_DATE", "")}
-
-            if total_pc is not None:
-                total_pc = float(total_pc)
-                result["total_put_call"] = round(total_pc, 3)
-                if total_pc > 1.1:
-                    result["total_signal"] = "EXTREME_FEAR"
-                elif total_pc > 0.9:
-                    result["total_signal"] = "BEARISH_HEDGING"
-                elif total_pc < 0.65:
-                    result["total_signal"] = "EXTREME_COMPLACENCY"
-                elif total_pc < 0.8:
-                    result["total_signal"] = "BULLISH_CONFIDENCE"
+            # 5-day trend
+            if len(valid) >= 5:
+                vix_5d_ago = valid[-5][1]
+                change = round(latest_vix - vix_5d_ago, 2)
+                change_pct = round((latest_vix / vix_5d_ago - 1) * 100, 1) if vix_5d_ago > 0 else 0
+                result["change_5d"] = change
+                result["change_5d_pct"] = change_pct
+                if change_pct > 20:
+                    result["trend"] = "FEAR_SPIKING"
+                elif change_pct > 5:
+                    result["trend"] = "FEAR_RISING"
+                elif change_pct < -20:
+                    result["trend"] = "FEAR_COLLAPSING"
+                elif change_pct < -5:
+                    result["trend"] = "FEAR_DECLINING"
                 else:
-                    result["total_signal"] = "NEUTRAL"
+                    result["trend"] = "STABLE"
 
-            if equity_pc is not None:
-                result["equity_put_call"] = round(float(equity_pc), 3)
-            if index_pc is not None:
-                result["index_put_call"] = round(float(index_pc), 3)
-
-            # 5-day trend (are puts increasing or decreasing?)
-            if len(recent) >= 3:
-                totals = [float(r.get("TOTAL_PUT_CALL_RATIO", 0)) for r in recent if r.get("TOTAL_PUT_CALL_RATIO")]
-                if len(totals) >= 3:
-                    avg_recent = sum(totals[:2]) / 2
-                    avg_prior = sum(totals[2:]) / max(len(totals[2:]), 1)
-                    if avg_prior > 0:
-                        trend_chg = round((avg_recent / avg_prior - 1) * 100, 1)
-                        result["trend_pct"] = trend_chg
-                        if trend_chg > 10:
-                            result["trend"] = "PUTS_INCREASING"
-                        elif trend_chg < -10:
-                            result["trend"] = "PUTS_DECREASING"
-                        else:
-                            result["trend"] = "STABLE"
+            # Recent high/low for context
+            vix_values = [c for _, c in valid]
+            result["high_10d"] = round(max(vix_values), 2)
+            result["low_10d"] = round(min(vix_values), 2)
 
             return result
     except Exception:
@@ -1196,7 +1197,7 @@ async def _fetch_yield_curve() -> dict | None:
                         "api_key": fred_key,
                         "file_type": "json",
                         "sort_order": "desc",
-                        "limit": 5,
+                        "limit": 15,
                     },
                 )
                 if resp.status_code != 200:

@@ -97,7 +97,7 @@ RAG_MODULES: dict[str, dict] = {
     },
     "options_flow": {
         "label": "Options Flow",
-        "description": "CBOE put/call ratios showing institutional hedging activity — a leading indicator of market fear or complacency",
+        "description": "VIX (CBOE Volatility Index) — the options market's real-time fear gauge derived from S&P 500 option prices",
         "always_included": False,
         "icon": "layers",
         "color": "violet",
@@ -127,7 +127,7 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "signal_ranker": ["composite", "ranked", "data synthesis", "score", "signal rank", "conflict"],
     "trade_context": ["track record", "win rate", "historical", "past trades", "my history", "streak"],
     "dynamic_risk": ["drawdown", "equity curve", "size multiplier", "defensive", "capital preservation"],
-    "options_flow": ["put/call", "put call", "options", "hedging", "complacency", "cboe", "institutional fear"],
+    "options_flow": ["vix", "volatility index", "fear", "complacen", "options flow", "hedging", "cboe", "market stress"],
     "yield_curve": ["yield curve", "treasury", "2y", "10y", "spread", "inverted", "recession", "fed funds", "rate cut", "rate hike"],
 }
 
@@ -1166,56 +1166,49 @@ def _format_dynamic_risk(ctx: dict) -> str:
 
 
 def _format_options_flow(brief: dict) -> str:
-    """CBOE put/call ratios — institutional hedging activity."""
+    """VIX (CBOE Volatility Index) — the options market's fear gauge."""
     flow = brief.get("options_flow")
     if not flow:
         return ""
 
     lines = [
-        "### Options Flow (CBOE Put/Call Ratios)",
-        "NOTE: These ratios reflect aggregate options positioning across the market. "
-        "They are a SENTIMENT indicator, not a directional instruction. "
-        "Different strategies interpret high put/call ratios differently — "
-        "a momentum trader sees fear as a warning, while a contrarian sees it as opportunity. "
-        "Apply YOUR strategy's logic.",
+        "### Options Flow (VIX — CBOE Volatility Index)",
+        "NOTE: VIX measures expected 30-day S&P 500 volatility, derived from options prices. "
+        "It is the market's consensus FEAR level. Different strategies interpret fear differently — "
+        "a momentum trader sees high VIX as a warning to reduce risk, while a contrarian sees "
+        "it as a buying opportunity. Apply YOUR strategy's logic.",
     ]
 
-    total = flow.get("total_put_call")
-    if total is not None:
-        signal = flow.get("total_signal", "NEUTRAL")
-        lines.append(f"  Total put/call ratio: {total:.3f} ({signal})")
-        # Context for interpretation
+    vix = flow.get("vix")
+    if vix is not None:
+        signal = flow.get("signal", "NEUTRAL")
+        lines.append(f"  VIX level: {vix} ({signal})")
         if signal == "EXTREME_FEAR":
-            lines.append("  Context: Ratio above 1.1 — heavy put buying. Historically, extreme fear readings "
-                         "have occurred both before further declines AND before sharp reversals. "
-                         "The data alone does not tell you which.")
-        elif signal == "EXTREME_COMPLACENCY":
-            lines.append("  Context: Ratio below 0.65 — very little hedging. Historically, low put/call "
-                         "readings have preceded both continued rallies AND sudden corrections. "
-                         "The data alone does not tell you which.")
-        elif signal == "BEARISH_HEDGING":
-            lines.append("  Context: Elevated put buying suggests institutional caution.")
-        elif signal == "BULLISH_CONFIDENCE":
-            lines.append("  Context: Low put activity suggests market participants are not hedging aggressively.")
+            lines.append("  Context: VIX above 35 — options market pricing in severe turbulence. "
+                         "Historically, extreme VIX spikes have preceded both further crashes AND "
+                         "sharp V-shaped reversals. The data alone does not tell you which.")
+        elif signal == "ELEVATED_FEAR":
+            lines.append("  Context: VIX 25-35 — meaningful fear. Market participants are paying up "
+                         "for downside protection. Conditions are volatile.")
+        elif signal == "COMPLACENT" or signal == "EXTREME_COMPLACENCY":
+            lines.append("  Context: VIX below 15 — very low expected volatility. Markets are calm "
+                         "but complacency can precede sudden corrections. Low VIX has preceded both "
+                         "continued rallies AND sharp selloffs.")
 
-    equity = flow.get("equity_put_call")
-    index = flow.get("index_put_call")
-    if equity is not None:
-        lines.append(f"  Equity P/C: {equity:.3f} (individual stocks)")
-    if index is not None:
-        lines.append(f"  Index P/C: {index:.3f} (broad market hedges)")
-    if equity is not None and index is not None and equity > 0:
-        # Index-to-equity divergence is meaningful
-        ratio = round(index / equity, 2)
-        if ratio > 1.5:
-            lines.append(f"  Index/Equity divergence: {ratio}x — institutions hedging macro risk more than stock-specific")
-        elif ratio < 0.6:
-            lines.append(f"  Index/Equity divergence: {ratio}x — stock-specific hedging outpacing macro hedging")
+    high_10d = flow.get("high_10d")
+    low_10d = flow.get("low_10d")
+    if high_10d is not None and low_10d is not None:
+        lines.append(f"  10-day range: {low_10d} — {high_10d}")
 
     trend = flow.get("trend")
-    trend_pct = flow.get("trend_pct")
-    if trend and trend_pct is not None:
-        lines.append(f"  Multi-day trend: {trend} ({trend_pct:+.1f}% vs prior days)")
+    change_5d = flow.get("change_5d")
+    change_pct = flow.get("change_5d_pct")
+    if trend and change_5d is not None:
+        lines.append(f"  5-day trend: {trend} ({change_5d:+.2f} pts, {change_pct:+.1f}%)")
+        if trend == "FEAR_SPIKING":
+            lines.append("  Volatility is rising sharply — market stress increasing.")
+        elif trend == "FEAR_COLLAPSING":
+            lines.append("  Volatility is dropping fast — market calming rapidly.")
 
     return "\n".join(lines)
 
