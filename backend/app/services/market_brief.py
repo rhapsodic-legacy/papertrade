@@ -1188,30 +1188,44 @@ async def _fetch_yield_curve() -> dict | None:
 
     try:
         results: dict = {}
-        async with httpx.AsyncClient(timeout=15) as client:
-            for series_id, label in FRED_SERIES.items():
-                resp = await client.get(
-                    f"{FRED_BASE}/series/observations",
-                    params={
-                        "series_id": series_id,
-                        "api_key": fred_key,
-                        "file_type": "json",
-                        "sort_order": "desc",
-                        "limit": 15,
-                    },
-                )
-                if resp.status_code != 200:
-                    continue
-                obs = resp.json().get("observations", [])
-                # FRED sometimes returns "." for missing data
-                for o in obs:
-                    val = o.get("value", ".")
-                    if val != ".":
-                        results[label] = {
-                            "rate": round(float(val), 3),
-                            "date": o.get("date", ""),
-                        }
-                        break
+        async with httpx.AsyncClient(timeout=20) as client:
+            # Fetch all series in parallel to avoid sequential rate limiting
+            async def _fetch_one(series_id: str, label: str):
+                try:
+                    resp = await client.get(
+                        f"{FRED_BASE}/series/observations",
+                        params={
+                            "series_id": series_id,
+                            "api_key": fred_key,
+                            "file_type": "json",
+                            "sort_order": "desc",
+                            "limit": 30,
+                        },
+                    )
+                    if resp.status_code != 200:
+                        print(f"[FRED] {series_id} returned {resp.status_code}")
+                        return
+                    body = resp.json()
+                    if "error_code" in body:
+                        print(f"[FRED] {series_id} error: {body.get('error_message', '')[:100]}")
+                        return
+                    obs = body.get("observations", [])
+                    # FRED returns "." for missing data (weekends, holidays)
+                    for o in obs:
+                        val = o.get("value", ".")
+                        if val != ".":
+                            results[label] = {
+                                "rate": round(float(val), 3),
+                                "date": o.get("date", ""),
+                            }
+                            return
+                    print(f"[FRED] {series_id}: all {len(obs)} observations were '.' (missing)")
+                except Exception as e:
+                    print(f"[FRED] {series_id} fetch failed: {e}")
+
+            await asyncio.gather(
+                *[_fetch_one(sid, label) for sid, label in FRED_SERIES.items()]
+            )
 
         if not results:
             return None
