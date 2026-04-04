@@ -1204,6 +1204,447 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Convergence quality analysis
+# ---------------------------------------------------------------------------
+
+def _compute_module_diversity(module_lists: list[list[str]]) -> dict:
+    """Compute diversity of module usage across trades in a convergence cluster.
+
+    Returns a score from 0.0 (all trades used identical modules) to 1.0
+    (completely different modules), a classification, and shared modules.
+    """
+    if not module_lists or len(module_lists) < 2:
+        return {"score": 0.0, "classification": "single_trade", "shared_modules": [], "all_modules": []}
+
+    sets = [set(m) for m in module_lists if m]
+    if not sets:
+        return {"score": 0.0, "classification": "no_modules", "shared_modules": [], "all_modules": []}
+
+    all_modules = sorted(set().union(*sets))
+    shared = sorted(set.intersection(*sets)) if sets else []
+
+    # Average pairwise Jaccard distance
+    distances = []
+    for i in range(len(sets)):
+        for j in range(i + 1, len(sets)):
+            union = sets[i] | sets[j]
+            intersection = sets[i] & sets[j]
+            if union:
+                distances.append(1.0 - len(intersection) / len(union))
+            else:
+                distances.append(0.0)
+
+    score = round(sum(distances) / max(len(distances), 1), 3)
+
+    # Classify
+    signal_ranker_in_all = all({"signal_ranker"} <= s for s in sets)
+    if signal_ranker_in_all and score < 0.3:
+        classification = "signal_ranker_driven"
+    elif score > 0.3:
+        classification = "diverse"
+    else:
+        classification = "homogeneous"
+
+    return {
+        "score": score,
+        "classification": classification,
+        "shared_modules": shared,
+        "all_modules": all_modules,
+    }
+
+
+def _compute_reasoning_overlap(reasoning_texts: list[str]) -> float:
+    """Compute keyword overlap between reasoning texts in a cluster.
+
+    Returns 0.0 (no shared terms) to 1.0 (identical reasoning).
+    Uses significant tokens only (>3 chars, no stopwords).
+    """
+    if len(reasoning_texts) < 2:
+        return 0.0
+
+    stopwords = {
+        "the", "and", "for", "with", "this", "that", "from", "have", "has",
+        "are", "was", "were", "been", "being", "will", "would", "could",
+        "should", "may", "might", "can", "not", "but", "also", "than",
+        "into", "more", "most", "some", "such", "very", "just", "about",
+        "above", "below", "after", "before", "while", "during", "each",
+        "which", "their", "there", "these", "those", "when", "where",
+        "portfolio", "position", "trade", "buy", "sell", "stock", "crypto",
+    }
+
+    def tokenize(text: str) -> set[str]:
+        words = set(text.lower().split())
+        return {w for w in words if len(w) > 3 and w not in stopwords}
+
+    token_sets = [tokenize(t) for t in reasoning_texts if t]
+    if len(token_sets) < 2:
+        return 0.0
+
+    overlaps = []
+    for i in range(len(token_sets)):
+        for j in range(i + 1, len(token_sets)):
+            union = token_sets[i] | token_sets[j]
+            intersection = token_sets[i] & token_sets[j]
+            if union:
+                overlaps.append(len(intersection) / len(union))
+    return round(sum(overlaps) / max(len(overlaps), 1), 3)
+
+
+async def _get_outcome_price(
+    symbol: str, asset_type: str, trade_date: str, horizon_days: int,
+) -> float | None:
+    """Look up the closing price `horizon_days` after `trade_date`.
+
+    Uses historical candle data. Returns None if data not available.
+    """
+    from app.services.market_data import get_stock_candles, get_crypto_history, CRYPTO_MAP
+
+    target_date = date.fromisoformat(trade_date) + timedelta(days=horizon_days)
+
+    # Don't look up future dates
+    if target_date > date.today():
+        return None
+
+    # Fetch candles covering the trade date + horizon window
+    fetch_days = horizon_days + 15  # extra buffer for weekends/holidays
+    if asset_type == "crypto" or symbol in CRYPTO_MAP:
+        candles = await get_crypto_history(symbol, days=fetch_days)
+    else:
+        candles = await get_stock_candles(symbol, days=fetch_days)
+
+    if not candles:
+        return None
+
+    # Find the closest candle on or after the target date
+    target_str = target_date.isoformat()
+    for candle in candles:
+        candle_date = candle.get("date", "")
+        if candle_date >= target_str:
+            return candle["close"]
+
+    # If no candle on/after target, use the most recent one before it
+    if candles:
+        return candles[-1]["close"]
+    return None
+
+
+async def get_convergence_quality(
+    days: int = 30,
+    outcome_horizon: int = 5,
+    convergence_threshold: int = 3,
+) -> dict:
+    """Analyze whether convergence trades outperform independent trades.
+
+    For each trade in the window, tags it as convergence (N+ AIs same symbol+side+day)
+    or independent, then computes outcome returns after `outcome_horizon` days.
+    Also analyzes signal diversity within convergence clusters.
+    """
+    import json as _json
+
+    db = get_supabase_admin()
+
+    # Fetch all AI profiles
+    profiles_resp = db.table("profiles").select("id, display_name, ai_model, is_ai").eq("is_ai", True).execute()
+    if not profiles_resp.data:
+        return {"error": "No AI traders found"}
+
+    ai_ids = [p["id"] for p in profiles_resp.data]
+    profile_map = {p["id"]: _clean_display_name(p.get("display_name", "")) for p in profiles_resp.data}
+
+    # Fetch trades in window
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    tx_resp = (
+        db.table("transactions")
+        .select("id, user_id, symbol, asset_type, side, quantity, price, reasoning, modules_used, created_at")
+        .in_("user_id", ai_ids)
+        .gte("created_at", f"{cutoff}T00:00:00")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    if not tx_resp.data:
+        return {"total_trades_analyzed": 0, "convergence": {}, "independent": {}}
+
+    trades = tx_resp.data
+
+    # --- Step 1: Tag convergence vs independent ---
+    # Group by (date, symbol, side)
+    groups: dict[tuple, list[dict]] = {}
+    for t in trades:
+        day = t["created_at"][:10]
+        key = (day, t["symbol"], t["side"])
+        groups.setdefault(key, []).append(t)
+
+    convergence_ids: set[str] = set()
+    cluster_map: dict[str, tuple] = {}  # trade_id -> cluster key
+    for key, group in groups.items():
+        if len(group) >= convergence_threshold:
+            for t in group:
+                convergence_ids.add(t["id"])
+                cluster_map[t["id"]] = key
+
+    # --- Step 2: Compute outcomes ---
+    # Batch outcome lookups by symbol to minimize API calls
+    symbols_needed: dict[str, dict] = {}  # symbol -> {asset_type, dates: set}
+    settle_cutoff = date.today() - timedelta(days=outcome_horizon)
+
+    for t in trades:
+        trade_date = t["created_at"][:10]
+        if date.fromisoformat(trade_date) <= settle_cutoff:
+            sym = t["symbol"]
+            if sym not in symbols_needed:
+                symbols_needed[sym] = {"asset_type": t["asset_type"], "dates": set()}
+            symbols_needed[sym]["dates"].add(trade_date)
+
+    # Fetch outcome prices
+    outcome_cache: dict[tuple, float | None] = {}  # (symbol, trade_date) -> price
+    for sym, info in symbols_needed.items():
+        for td in info["dates"]:
+            price = await _get_outcome_price(sym, info["asset_type"], td, outcome_horizon)
+            outcome_cache[(sym, td)] = price
+
+    # --- Step 3: Compute per-trade returns ---
+    conv_results = []
+    indep_results = []
+    pending_count = 0
+
+    for t in trades:
+        trade_date = t["created_at"][:10]
+        trade_price = float(t["price"])
+        is_convergence = t["id"] in convergence_ids
+
+        # Parse modules
+        modules = []
+        if t.get("modules_used"):
+            try:
+                modules = _json.loads(t["modules_used"]) if isinstance(t["modules_used"], str) else t["modules_used"]
+            except Exception:
+                pass
+
+        outcome_price = outcome_cache.get((t["symbol"], trade_date))
+
+        if outcome_price is None:
+            pending_count += 1
+            continue
+
+        # Compute return
+        if t["side"] == "buy":
+            return_pct = round((outcome_price - trade_price) / trade_price * 100, 2) if trade_price > 0 else 0
+        else:
+            return_pct = round((trade_price - outcome_price) / trade_price * 100, 2) if trade_price > 0 else 0
+
+        record = {
+            "return_pct": return_pct,
+            "is_win": return_pct > 0,
+            "side": t["side"],
+            "symbol": t["symbol"],
+            "modules": modules,
+            "trader": profile_map.get(t["user_id"], "Unknown"),
+            "trade_date": trade_date,
+            "trade_price": trade_price,
+            "outcome_price": round(outcome_price, 2),
+        }
+
+        if is_convergence:
+            conv_results.append(record)
+        else:
+            indep_results.append(record)
+
+    # --- Step 4: Aggregate ---
+    def _aggregate(records: list[dict]) -> dict:
+        if not records:
+            return {"total": 0, "win_rate": 0, "avg_return_pct": 0, "median_return_pct": 0, "by_side": {}}
+
+        wins = sum(1 for r in records if r["is_win"])
+        returns = sorted(r["return_pct"] for r in records)
+        mid = len(returns) // 2
+        median = returns[mid] if len(returns) % 2 else round((returns[mid - 1] + returns[mid]) / 2, 2)
+
+        by_side = {}
+        for side in ("buy", "sell"):
+            side_recs = [r for r in records if r["side"] == side]
+            if side_recs:
+                side_wins = sum(1 for r in side_recs if r["is_win"])
+                by_side[side] = {
+                    "total": len(side_recs),
+                    "win_rate": round(side_wins / len(side_recs) * 100, 1),
+                    "avg_return_pct": round(sum(r["return_pct"] for r in side_recs) / len(side_recs), 2),
+                }
+
+        return {
+            "total": len(records),
+            "win_rate": round(wins / len(records) * 100, 1),
+            "avg_return_pct": round(sum(r["return_pct"] for r in records) / len(records), 2),
+            "median_return_pct": median,
+            "by_side": by_side,
+        }
+
+    conv_agg = _aggregate(conv_results)
+    indep_agg = _aggregate(indep_results)
+
+    # --- Step 5: Convergence edge ---
+    wr_delta = round(conv_agg["win_rate"] - indep_agg["win_rate"], 1) if conv_agg["total"] and indep_agg["total"] else 0
+    ret_delta = round(conv_agg["avg_return_pct"] - indep_agg["avg_return_pct"], 2) if conv_agg["total"] and indep_agg["total"] else 0
+
+    if conv_agg["total"] < 5 or indep_agg["total"] < 5:
+        verdict = "insufficient_data"
+    elif wr_delta > 3:
+        verdict = "convergence_outperforms"
+    elif wr_delta < -3:
+        verdict = "independent_outperforms"
+    else:
+        verdict = "no_significant_difference"
+
+    # --- Step 6: Cluster diversity analysis ---
+    cluster_details = []
+    diversity_buckets: dict[str, list[dict]] = {
+        "diverse": [], "signal_ranker_driven": [], "homogeneous": [],
+        "no_modules": [], "single_trade": [],
+    }
+
+    for key, group in groups.items():
+        if len(group) < convergence_threshold:
+            continue
+
+        day, sym, side = key
+        trade_date = day
+
+        # Collect modules and reasoning from all trades in cluster
+        cluster_modules = []
+        cluster_reasoning = []
+        cluster_traders = []
+        prices = []
+        for t in group:
+            modules = []
+            if t.get("modules_used"):
+                try:
+                    modules = _json.loads(t["modules_used"]) if isinstance(t["modules_used"], str) else t["modules_used"]
+                except Exception:
+                    pass
+            cluster_modules.append(modules)
+            cluster_reasoning.append(t.get("reasoning", "") or "")
+            cluster_traders.append(profile_map.get(t["user_id"], "Unknown"))
+            prices.append(float(t["price"]))
+
+        diversity = _compute_module_diversity(cluster_modules)
+        reasoning_overlap = _compute_reasoning_overlap(cluster_reasoning)
+
+        outcome = outcome_cache.get((sym, trade_date))
+        avg_price = round(sum(prices) / len(prices), 2)
+
+        if outcome is not None:
+            if side == "buy":
+                cluster_return = round((outcome - avg_price) / avg_price * 100, 2) if avg_price > 0 else 0
+            else:
+                cluster_return = round((avg_price - outcome) / avg_price * 100, 2) if avg_price > 0 else 0
+            cluster_win = cluster_return > 0
+            status = "settled"
+        else:
+            cluster_return = None
+            cluster_win = None
+            status = "pending"
+
+        detail = {
+            "date": day,
+            "symbol": sym,
+            "side": side,
+            "trader_count": len(group),
+            "traders": sorted(set(cluster_traders)),
+            "avg_trade_price": avg_price,
+            "outcome_price": round(outcome, 2) if outcome else None,
+            "return_pct": cluster_return,
+            "is_win": cluster_win,
+            "status": status,
+            "diversity_class": diversity["classification"],
+            "module_diversity_score": diversity["score"],
+            "reasoning_overlap": reasoning_overlap,
+            "shared_modules": diversity["shared_modules"],
+            "all_modules": diversity["all_modules"],
+        }
+        cluster_details.append(detail)
+
+        if status == "settled":
+            diversity_buckets[diversity["classification"]].append(detail)
+
+    # Aggregate diversity buckets
+    diversity_analysis = {}
+    for cls, bucket in diversity_buckets.items():
+        settled = [d for d in bucket if d["return_pct"] is not None]
+        if settled:
+            wins = sum(1 for d in settled if d["is_win"])
+            diversity_analysis[cls] = {
+                "count": len(settled),
+                "win_rate": round(wins / len(settled) * 100, 1),
+                "avg_return_pct": round(sum(d["return_pct"] for d in settled) / len(settled), 2),
+            }
+        else:
+            diversity_analysis[cls] = {"count": 0, "win_rate": 0, "avg_return_pct": 0}
+
+    # Generate insight
+    diverse_wr = diversity_analysis.get("diverse", {}).get("win_rate", 0)
+    sr_wr = diversity_analysis.get("signal_ranker_driven", {}).get("win_rate", 0)
+    homo_wr = diversity_analysis.get("homogeneous", {}).get("win_rate", 0)
+    if diverse_wr and sr_wr and diverse_wr != sr_wr:
+        delta = round(diverse_wr - sr_wr, 1)
+        if delta > 0:
+            insight = f"Diverse-reasoning convergence outperforms signal-ranker-driven by {delta}pp win rate"
+        else:
+            insight = f"Signal-ranker-driven convergence outperforms diverse-reasoning by {abs(delta)}pp win rate"
+    elif not diversity_analysis.get("diverse", {}).get("count") and not diversity_analysis.get("signal_ranker_driven", {}).get("count"):
+        insight = "Not enough settled convergence clusters to compare diversity impact"
+    else:
+        insight = "No significant difference between diversity categories yet"
+    diversity_analysis["insight"] = insight
+
+    # --- Step 7: Weekly trend ---
+    weekly: dict[str, dict] = {}
+    for r in conv_results + indep_results:
+        d = date.fromisoformat(r["trade_date"])
+        week_start = (d - timedelta(days=d.weekday())).isoformat()
+        if week_start not in weekly:
+            weekly[week_start] = {"conv_wins": 0, "conv_total": 0, "indep_wins": 0, "indep_total": 0}
+        w = weekly[week_start]
+        is_conv = r in conv_results
+        if is_conv:
+            w["conv_total"] += 1
+            if r["is_win"]:
+                w["conv_wins"] += 1
+        else:
+            w["indep_total"] += 1
+            if r["is_win"]:
+                w["indep_wins"] += 1
+
+    weekly_trend = []
+    for week, w in sorted(weekly.items()):
+        weekly_trend.append({
+            "week": week,
+            "convergence_win_rate": round(w["conv_wins"] / w["conv_total"] * 100, 1) if w["conv_total"] else None,
+            "independent_win_rate": round(w["indep_wins"] / w["indep_total"] * 100, 1) if w["indep_total"] else None,
+            "convergence_count": w["conv_total"],
+            "independent_count": w["indep_total"],
+        })
+
+    return {
+        "window_days": days,
+        "outcome_horizon_days": outcome_horizon,
+        "convergence_threshold": convergence_threshold,
+        "total_trades_analyzed": len(conv_results) + len(indep_results),
+        "settled_trades": len(conv_results) + len(indep_results),
+        "pending_trades": pending_count,
+        "convergence": conv_agg,
+        "independent": indep_agg,
+        "convergence_edge": {
+            "win_rate_delta": wr_delta,
+            "avg_return_delta": ret_delta,
+            "verdict": verdict,
+        },
+        "diversity_analysis": diversity_analysis,
+        "clusters": sorted(cluster_details, key=lambda x: x["date"], reverse=True),
+        "weekly_trend": weekly_trend,
+    }
+
+
 async def get_trade_reasoning(
     days: int = 7,
     trader_id: str | None = None,

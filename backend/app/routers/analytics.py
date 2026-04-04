@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.services.analytics import (
     get_trader_analytics, get_ai_comparison, get_model_deep_dive,
-    get_module_attribution,
+    get_module_attribution, get_convergence_quality,
     get_reflection_trends, get_trade_reasoning, _model_label, _clean_display_name,
 )
 from app.services.backtest import (
@@ -102,6 +102,22 @@ async def trade_reasoning(
     modules used, grouped by date. Flags convergence (3+ AIs making the same
     call on the same symbol) as potential herd behavior."""
     return await get_trade_reasoning(days=days, trader_id=trader_id, symbol=symbol)
+
+
+@router.get("/convergence-quality")
+async def convergence_quality_endpoint(
+    days: int = Query(30, ge=7, le=180),
+    outcome_horizon: int = Query(5, ge=3, le=14),
+    threshold: int = Query(3, ge=2, le=10),
+):
+    """Measure whether AI trade convergence (3+ AIs buying the same stock)
+    reflects smart consensus or herding. Compares convergence vs independent
+    trade outcomes, analyzes module diversity within clusters, and tracks
+    weekly trends."""
+    return await get_convergence_quality(
+        days=days, outcome_horizon=outcome_horizon,
+        convergence_threshold=threshold,
+    )
 
 
 @router.get("/model-deep-dive")
