@@ -1532,8 +1532,18 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
 # Trade execution (bypasses market hours for AI)
 # ---------------------------------------------------------------------------
 
-async def _execute_ai_trade(user_id: str, trade: dict, active_modules: set[str] | None = None) -> dict | None:
-    """Execute a single trade for an AI trader. Returns result or None on failure."""
+async def _execute_ai_trade(
+    user_id: str,
+    trade: dict,
+    active_modules: set[str] | None = None,
+    brief: dict | None = None,
+    risk_params: dict | None = None,
+) -> dict | None:
+    """Execute a single trade for an AI trader. Returns result or None on failure.
+
+    ATR-based position cap: For buys, limits dollar exposure so that a 2×ATR
+    adverse move loses at most ``risk_per_trade_pct`` of portfolio value.
+    """
     from app.services.rag_toolkit import RAG_MODULES, detect_modules_from_text
 
     symbol = trade.get("symbol", "").upper()
@@ -1553,8 +1563,6 @@ async def _execute_ai_trade(user_id: str, trade: dict, active_modules: set[str] 
         return None
     if asset_type == "crypto" and symbol not in CRYPTO_MAP:
         return None
-    if asset_type == "stock":
-        quantity = int(quantity)  # Whole shares only
 
     # Get current price
     quote = await get_quote(symbol, asset_type)
@@ -1562,12 +1570,47 @@ async def _execute_ai_trade(user_id: str, trade: dict, active_modules: set[str] 
         return None
 
     price = quote["price"]
-    total = round(price * quantity, 8)
     db = get_supabase_admin()
 
     # Get profile
     profile = db.table("profiles").select("cash_balance").eq("id", user_id).single().execute()
     cash = float(profile.data["cash_balance"])
+
+    # --- ATR-based position cap (buys only) ---
+    if side == "buy" and brief and price > 0:
+        # Look up ATR for this symbol
+        tech_data = brief.get("stock_technicals", {}).get(symbol) or brief.get("crypto_technicals", {}).get(symbol) or {}
+        atr = tech_data.get("atr_14")
+        if atr and atr > 0:
+            atr_pct = atr / price  # ATR as fraction of price
+            # Risk budget: lose at most N% of portfolio on a 2×ATR stop
+            # Conservative personalities get tighter budgets
+            max_position_pct = (risk_params or {}).get("max_position_pct", 15.0) / 100
+            risk_per_trade = max_position_pct * 0.2  # risk 20% of max_position as loss budget
+            portfolio_value = cash  # approximate (cash is dominant pre-buy)
+            # max_dollars = portfolio_value * risk_per_trade / (2 * atr_pct)
+            atr_stop_fraction = 2 * atr_pct
+            if atr_stop_fraction > 0:
+                max_dollars = portfolio_value * risk_per_trade / atr_stop_fraction
+                max_dollars = min(max_dollars, portfolio_value * max_position_pct)  # still respect hard cap
+                if asset_type == "stock":
+                    max_qty = int(max_dollars / price)
+                else:
+                    max_qty = round(max_dollars / price, 8)
+                if max_qty > 0 and quantity > max_qty:
+                    original_qty = quantity
+                    quantity = max_qty
+                    trade["quantity"] = quantity
+                    print(
+                        f"[ATR_CAP] {symbol}: capped {original_qty} → {quantity} "
+                        f"(ATR={atr:.2f}, ATR%={atr_pct*100:.1f}%, "
+                        f"max${max_dollars:,.0f}, risk_budget={risk_per_trade*100:.1f}%)"
+                    )
+
+    if asset_type == "stock":
+        quantity = int(quantity)  # ensure whole shares after cap
+
+    total = round(price * quantity, 8)
 
     try:
         if side == "buy":
@@ -1848,10 +1891,14 @@ async def _run_trader(
         }
         trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 
-        # Execute trades
+        # Execute trades (with ATR-based position cap)
+        trade_risk_params = personality.get("risk_params", {})
         executed = []
         for trade in trades:
-            result = await _execute_ai_trade(user_id, trade, active_modules=toolkit_modules)
+            result = await _execute_ai_trade(
+                user_id, trade, active_modules=toolkit_modules,
+                brief=brief, risk_params=trade_risk_params,
+            )
             if result:
                 entry = {
                     "symbol": trade["symbol"],

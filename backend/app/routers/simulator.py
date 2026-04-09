@@ -319,12 +319,7 @@ async def check_local_llm():
     }
 
 
-@router.post("/setup")
+@router.get("/setup")
 async def setup_tables():
-    """One-time: create sim_runs, sim_trades, sim_snapshots tables."""
-    db = get_supabase_admin()
-    try:
-        db.postgrest.rpc("exec_sql", {"query": CREATE_TABLES_SQL}).execute()
-        return {"status": "ok", "message": "Simulator tables created"}
-    except Exception as e:
-        return {"status": "note", "message": f"Run this SQL in Supabase dashboard: {str(e)[:200]}"}
+    """Return the SQL needed to create simulator tables (run in Supabase dashboard)."""
+    return {"sql": CREATE_TABLES_SQL}
