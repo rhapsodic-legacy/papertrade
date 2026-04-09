@@ -1477,6 +1477,12 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
         agentic_data=agentic_context_data or {},
     )
 
+    # Log prompt size per model (diagnostic for Issue #4: Mistral Small compliance)
+    model_name = model_cfg.get("model_id", "unknown")
+    prompt_chars = len(user_msg)
+    prompt_tokens_est = prompt_chars // 4  # rough estimate
+    print(f"[PROMPT_SIZE] {display_name} ({model_name}): {prompt_chars:,} chars (~{prompt_tokens_est:,} tokens), modules: {[t['module'] for t in personality.get('toolkit', [])]}")
+
     # Build system prompt with optional session context
     system_prompt = TRADE_SYSTEM
     if session in SESSION_CONTEXTS:

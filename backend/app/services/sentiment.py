@@ -189,31 +189,17 @@ async def score_headlines(
         return [], {}
 
     try:
-        # Single Mistral call with low temperature for consistent scoring
+        from app.services.llm import call_llm
+
         prompt = _build_scoring_prompt(headlines)
-        url = "https://api.mistral.ai/v1/chat/completions"
-        payload = {
-            "model": "mistral-large-latest",
-            "messages": [
-                {"role": "system", "content": SCORING_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 4096,
-        }
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {settings.mistral_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            if resp.status_code != 200:
-                print(f"[SENTIMENT] Mistral error {resp.status_code}: {resp.text[:300]}")
-                return [], {}
-            raw = resp.json()["choices"][0]["message"]["content"]
+        raw = await call_llm(
+            system=SCORING_SYSTEM,
+            user_msg=prompt,
+            tier="local",
+            temperature=0.1,
+            max_tokens=4096,
+            local_model=None,  # uses ollama_small_model default for classification
+        )
 
         scored = _parse_scores(raw, headlines)
         print(f"[SENTIMENT] Scored {len(scored)}/{len(headlines)} headlines")
@@ -314,31 +300,17 @@ async def generate_market_narrative(
     )
 
     try:
-        url = "https://api.mistral.ai/v1/chat/completions"
-        payload = {
-            "model": "mistral-large-latest",
-            "messages": [
-                {"role": "system", "content": NARRATIVE_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1024,
-        }
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {settings.mistral_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            if resp.status_code != 200:
-                print(f"[NARRATIVE] Mistral error {resp.status_code}: {resp.text[:300]}")
-                return ""
-            narrative = resp.json()["choices"][0]["message"]["content"].strip()
-            print(f"[NARRATIVE] Generated market narrative ({len(narrative)} chars)")
-            return narrative
+        from app.services.llm import call_llm
+
+        narrative = (await call_llm(
+            system=NARRATIVE_SYSTEM,
+            user_msg=prompt,
+            tier="local",
+            temperature=0.3,
+            max_tokens=1024,
+        )).strip()
+        print(f"[NARRATIVE] Generated market narrative ({len(narrative)} chars)")
+        return narrative
     except Exception as e:
         print(f"[NARRATIVE] Failed: {e}")
         return ""

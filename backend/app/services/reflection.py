@@ -206,32 +206,18 @@ async def run_reflections() -> dict:
         print("[REFLECTION] No trades with significant price movement")
         return {"status": "ok", "reflected_count": 0}
 
-    # Batch Mistral call
+    # LLM call (local Gemma if available, falls back to Mistral)
     try:
+        from app.services.llm import call_llm
+
         prompt = _build_reflection_prompt(enriched)
-        url = "https://api.mistral.ai/v1/chat/completions"
-        payload = {
-            "model": "mistral-large-latest",
-            "messages": [
-                {"role": "system", "content": REFLECTION_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 4096,
-        }
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {settings.mistral_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            if resp.status_code != 200:
-                print(f"[REFLECTION] Mistral error {resp.status_code}: {resp.text[:300]}")
-                return {"status": "error", "reason": f"Mistral {resp.status_code}"}
-            raw = resp.json()["choices"][0]["message"]["content"]
+        raw = await call_llm(
+            system=REFLECTION_SYSTEM,
+            user_msg=prompt,
+            tier="local",
+            temperature=0.3,
+            max_tokens=4096,
+        )
 
         reflections = _parse_reflections(raw, enriched)
         _persist_reflections(reflections)

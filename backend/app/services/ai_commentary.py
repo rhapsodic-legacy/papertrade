@@ -144,34 +144,46 @@ Positions:
 
 Write your daily commentary blog post."""
 
+            from app.services.llm import call_llm
             settings = get_settings()
-            api_type = model_cfg["api"]
 
-            if api_type == "gemini":
-                if not settings.gemini_api_key:
-                    raise Exception("GEMINI_API_KEY not configured")
-                raw = await _call_gemini(
-                    model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
-                    settings.gemini_api_key,
-                )
-            elif api_type == "mistral":
-                key_field = model_cfg.get("api_key_field", "mistral_api_key")
-                api_key = getattr(settings, key_field, "") or settings.mistral_api_key
-                if not api_key:
-                    raise Exception(f"{key_field.upper()} not configured")
-                raw = await _call_mistral(
-                    model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
-                    api_key,
-                )
-            elif api_type == "groq":
-                if not settings.groq_api_key:
-                    raise Exception("GROQ_API_KEY not configured")
-                raw = await _call_groq(
-                    model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
-                    settings.groq_api_key,
+            # Commentary can run locally (saves 20 API calls/day)
+            # Falls back to cloud per-model if Ollama unavailable
+            if settings.ollama_base_url:
+                raw = await call_llm(
+                    system=COMMENTARY_SYSTEM,
+                    user_msg=user_msg,
+                    tier="local",
+                    temperature=0.7,
+                    max_tokens=2048,
                 )
             else:
-                raise Exception(f"Unknown API: {api_type}")
+                api_type = model_cfg["api"]
+                if api_type == "gemini":
+                    if not settings.gemini_api_key:
+                        raise Exception("GEMINI_API_KEY not configured")
+                    raw = await _call_gemini(
+                        model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                        settings.gemini_api_key,
+                    )
+                elif api_type == "mistral":
+                    key_field = model_cfg.get("api_key_field", "mistral_api_key")
+                    api_key = getattr(settings, key_field, "") or settings.mistral_api_key
+                    if not api_key:
+                        raise Exception(f"{key_field.upper()} not configured")
+                    raw = await _call_mistral(
+                        model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                        api_key,
+                    )
+                elif api_type == "groq":
+                    if not settings.groq_api_key:
+                        raise Exception("GROQ_API_KEY not configured")
+                    raw = await _call_groq(
+                        model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                        settings.groq_api_key,
+                    )
+                else:
+                    raise Exception(f"Unknown API: {api_type}")
 
             # Parse headline from response
             text = raw.strip()

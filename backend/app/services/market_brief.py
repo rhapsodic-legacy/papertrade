@@ -1101,15 +1101,27 @@ async def _fetch_options_flow() -> dict | None:
     VIX > 30 = extreme fear, < 15 = complacency. Mean ~20."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
+            # Try v8 endpoint first, fall back to v10 if blocked
+            for base_url in [
                 "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX",
-                params={"range": "10d", "interval": "1d"},
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
+                "https://query2.finance.yahoo.com/v8/finance/chart/%5EVIX",
+            ]:
+                resp = await client.get(
+                    base_url,
+                    params={"range": "10d", "interval": "1d"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code == 200:
+                    break
             if resp.status_code != 200:
+                print(f"[OPTIONS_FLOW] Yahoo VIX returned HTTP {resp.status_code}: {resp.text[:200]}")
                 return None
             data = resp.json()
-            result_data = data.get("chart", {}).get("result", [{}])[0]
+            chart = data.get("chart", {})
+            if chart.get("error"):
+                print(f"[OPTIONS_FLOW] Yahoo VIX API error: {chart['error']}")
+                return None
+            result_data = chart.get("result", [{}])[0]
             closes = result_data.get("indicators", {}).get("quote", [{}])[0].get("close", [])
             timestamps = result_data.get("timestamp", [])
 
@@ -1159,7 +1171,8 @@ async def _fetch_options_flow() -> dict | None:
             result["low_10d"] = round(min(vix_values), 2)
 
             return result
-    except Exception:
+    except Exception as e:
+        print(f"[OPTIONS_FLOW] VIX fetch failed: {type(e).__name__}: {e}")
         return None
 
 
@@ -1268,9 +1281,77 @@ async def _fetch_yield_curve() -> dict | None:
             else:
                 curve["rate_expectation"] = "ON_HOLD"
 
+        # If FRED missed 10Y or 30Y, try Yahoo Finance fallback
+        if "10Y" not in results or "30Y" not in results:
+            print(f"[FRED] Missing series, attempting Yahoo fallback. Have: {list(results.keys())}")
+            yf_fallback = await _fetch_treasury_yields_yahoo()
+            if yf_fallback:
+                for label in ["10Y", "30Y"]:
+                    if label not in results and label in yf_fallback:
+                        results[label] = yf_fallback[label]
+                        print(f"[FRED] Filled {label} from Yahoo Finance fallback")
+                # Recompute spreads with new data
+                rate_2y = results.get("2Y", {}).get("rate")
+                rate_10y = results.get("10Y", {}).get("rate")
+                rate_30y = results.get("30Y", {}).get("rate")
+                if rate_2y is not None and rate_10y is not None and "spread_10y_2y" not in curve:
+                    spread = round(rate_10y - rate_2y, 3)
+                    curve["spread_10y_2y"] = spread
+                    if spread < -0.5:
+                        curve["curve_signal"] = "DEEPLY_INVERTED"
+                        curve["recession_risk"] = "ELEVATED"
+                    elif spread < 0:
+                        curve["curve_signal"] = "INVERTED"
+                        curve["recession_risk"] = "ABOVE_AVERAGE"
+                    elif spread < 0.5:
+                        curve["curve_signal"] = "FLAT"
+                        curve["recession_risk"] = "MODERATE"
+                    else:
+                        curve["curve_signal"] = "NORMAL"
+                        curve["recession_risk"] = "LOW"
+                if rate_30y is not None and rate_10y is not None and "spread_30y_10y" not in curve:
+                    curve["spread_30y_10y"] = round(rate_30y - rate_10y, 3)
+                curve["rates"] = results
+
         return curve
-    except Exception:
+    except Exception as e:
+        print(f"[YIELD_CURVE] Fetch failed: {type(e).__name__}: {e}")
         return None
+
+
+async def _fetch_treasury_yields_yahoo() -> dict:
+    """Fallback: fetch approximate Treasury yields from Yahoo Finance
+    using Treasury ETF prices (^TNX for 10Y, ^TYX for 30Y).
+    These Yahoo symbols report yields directly as prices."""
+    result: dict = {}
+    symbols = {"^TNX": "10Y", "^TYX": "30Y"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            for symbol, label in symbols.items():
+                try:
+                    resp = await client.get(
+                        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                        params={"range": "5d", "interval": "1d"},
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    chart_result = data.get("chart", {}).get("result", [{}])[0]
+                    closes = chart_result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                    valid = [c for c in closes if c is not None]
+                    if valid:
+                        # Yahoo ^TNX/^TYX report yield as price (e.g. 4.25 = 4.25%)
+                        result[label] = {
+                            "rate": round(valid[-1], 3),
+                            "date": "",
+                            "source": "Yahoo Finance",
+                        }
+                except Exception as e:
+                    print(f"[YIELD_CURVE_YAHOO] {symbol} failed: {e}")
+    except Exception as e:
+        print(f"[YIELD_CURVE_YAHOO] Fallback fetch failed: {e}")
+    return result
 
 
 async def get_latest_brief() -> dict | None:
