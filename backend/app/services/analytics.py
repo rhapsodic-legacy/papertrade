@@ -1787,3 +1787,322 @@ def _std(values: list[float]) -> float:
     mean = sum(values) / len(values)
     variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
     return math.sqrt(variance)
+
+
+# ---------------------------------------------------------------------------
+# Trade discipline scoring
+# ---------------------------------------------------------------------------
+# Measures whether each AI personality follows their stated strategy.
+# Each rule returns a score 0-100 and a short description.
+
+# Personality-specific discipline rules
+DISCIPLINE_RULES: dict[str, list[dict]] = {
+    "vanilla": [
+        {"id": "cash_reserve", "label": "Cash Reserve (10-20%)", "target_min": 10, "target_max": 20},
+        {"id": "sector_cap", "label": "No Sector >40%", "max_sector_pct": 40},
+        {"id": "diversification", "label": "Diversified (5+ positions)", "min_positions": 5},
+        {"id": "module_alignment", "label": "Uses Fundamentals+Technicals", "required_modules": ["fundamentals", "technicals"]},
+    ],
+    "steady_eddie": [
+        {"id": "crypto_limit", "label": "Crypto <5%", "max_crypto_pct": 5},
+        {"id": "cash_reserve", "label": "Cash Reserve (10%+)", "target_min": 10, "target_max": 100},
+        {"id": "low_turnover", "label": "Low Turnover (<5 trades/day avg)", "max_daily_trades": 5},
+        {"id": "module_alignment", "label": "Uses Fundamentals", "required_modules": ["fundamentals"]},
+    ],
+    "yolo_bot": [
+        {"id": "low_cash", "label": "Fully Invested (<10% cash)", "target_min": 0, "target_max": 10},
+        {"id": "concentrated", "label": "Concentrated (3-5 names)", "min_positions": 2, "max_positions": 8},
+        {"id": "high_turnover", "label": "Active Trading (3+ trades/day avg)", "min_daily_trades": 3},
+        {"id": "module_alignment", "label": "Uses Momentum+Technicals", "required_modules": ["momentum", "technicals"]},
+    ],
+    "contrarian_carl": [
+        {"id": "cash_reserve", "label": "Dry Powder (15-25% cash)", "target_min": 15, "target_max": 25},
+        {"id": "diversification", "label": "6-10 positions", "min_positions": 6, "max_positions": 12},
+        {"id": "buys_dips", "label": "Buys Oversold Assets", "check": "buys_low_rsi"},
+        {"id": "module_alignment", "label": "Uses Sentiment+Fundamentals", "required_modules": ["sentiment", "fundamentals"]},
+    ],
+    "crypto_chad": [
+        {"id": "crypto_heavy", "label": "60-80% Crypto", "min_crypto_pct": 60, "max_crypto_pct": 80},
+        {"id": "has_tech", "label": "Tech Stock Hedges", "check": "has_tech_stocks"},
+        {"id": "module_alignment", "label": "Uses Momentum+Technicals", "required_modules": ["momentum", "technicals"]},
+    ],
+}
+
+
+async def compute_discipline_score(trader_id: str) -> dict:
+    """Score how well an AI trader follows their personality's strategy.
+
+    Returns per-rule scores (0-100) and an overall discipline grade.
+    """
+    db = get_supabase_admin()
+
+    # Get profile
+    profile = db.table("profiles").select(
+        "id, display_name, ai_model, cash_balance"
+    ).eq("id", trader_id).single().execute()
+    if not profile.data:
+        return {"error": "Trader not found"}
+
+    display_name = profile.data["display_name"]
+    cash = float(profile.data["cash_balance"])
+
+    # Determine personality
+    from app.services.ai_trader import PERSONALITIES
+    personality_key = None
+    for pkey, pinfo in PERSONALITIES.items():
+        if pinfo["name"] in display_name:
+            personality_key = pkey
+            break
+    if not personality_key or personality_key not in DISCIPLINE_RULES:
+        return {"error": f"Unknown personality for {display_name}"}
+
+    # Get positions
+    positions = db.table("positions").select("*").eq("user_id", trader_id).execute()
+    pos_list = positions.data or []
+
+    # Get recent transactions (last 14 days)
+    cutoff = (date.today() - timedelta(days=14)).isoformat()
+    tx_resp = (
+        db.table("transactions")
+        .select("id, symbol, asset_type, side, quantity, price, total, modules_used, created_at")
+        .eq("user_id", trader_id)
+        .gte("created_at", f"{cutoff}T00:00:00")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    transactions = tx_resp.data or []
+
+    # Compute derived data
+    # Portfolio value
+    invested_value = 0.0
+    crypto_value = 0.0
+    tech_value = 0.0
+    sector_values: dict[str, float] = {}
+    for pos in pos_list:
+        qty = float(pos["quantity"])
+        price_est = float(pos["avg_cost_basis"])
+        value = qty * price_est
+        invested_value += value
+        if pos["asset_type"] == "crypto":
+            crypto_value += value
+        else:
+            sector = STOCK_SECTORS.get(pos["symbol"], "Other")
+            sector_values[sector] = sector_values.get(sector, 0) + value
+            if sector == "Technology":
+                tech_value += value
+
+    total_value = cash + invested_value
+    cash_pct = (cash / total_value * 100) if total_value > 0 else 100
+    crypto_pct = (crypto_value / total_value * 100) if total_value > 0 else 0
+    num_positions = len(pos_list)
+    max_sector_pct = max((v / total_value * 100 for v in sector_values.values()), default=0) if total_value > 0 else 0
+
+    # Trade frequency
+    trade_days = set()
+    for tx in transactions:
+        trade_days.add(tx["created_at"][:10])
+    num_trade_days = max(len(trade_days), 1)
+    avg_daily_trades = len(transactions) / num_trade_days
+
+    # Module usage from recent trades
+    module_counts: dict[str, int] = {}
+    for tx in transactions:
+        mods = tx.get("modules_used") or ""
+        if isinstance(mods, str):
+            for m in mods.replace("[", "").replace("]", "").replace('"', "").split(","):
+                m = m.strip()
+                if m:
+                    module_counts[m] = module_counts.get(m, 0) + 1
+
+    # Evaluate each rule
+    rules = DISCIPLINE_RULES[personality_key]
+    results = []
+    for rule in rules:
+        rule_id = rule["id"]
+        score = 0
+        detail = ""
+
+        if rule_id == "cash_reserve" or rule_id == "low_cash":
+            target_min = rule.get("target_min", 0)
+            target_max = rule.get("target_max", 100)
+            if target_min <= cash_pct <= target_max:
+                score = 100
+                detail = f"Cash {cash_pct:.1f}% (target {target_min}-{target_max}%)"
+            else:
+                # Partial credit based on distance from target range
+                if cash_pct < target_min:
+                    distance = target_min - cash_pct
+                else:
+                    distance = cash_pct - target_max
+                score = max(0, int(100 - distance * 5))  # lose 5 pts per % off target
+                detail = f"Cash {cash_pct:.1f}% (target {target_min}-{target_max}%)"
+
+        elif rule_id == "sector_cap":
+            max_allowed = rule["max_sector_pct"]
+            if max_sector_pct <= max_allowed:
+                score = 100
+                detail = f"Max sector {max_sector_pct:.1f}% (limit {max_allowed}%)"
+            else:
+                score = max(0, int(100 - (max_sector_pct - max_allowed) * 5))
+                detail = f"Max sector {max_sector_pct:.1f}% EXCEEDS {max_allowed}% limit"
+
+        elif rule_id == "diversification" or rule_id == "concentrated":
+            min_pos = rule.get("min_positions", 0)
+            max_pos = rule.get("max_positions", 999)
+            if min_pos <= num_positions <= max_pos:
+                score = 100
+                detail = f"{num_positions} positions (target {min_pos}-{max_pos})"
+            elif num_positions < min_pos:
+                score = max(0, int(num_positions / min_pos * 100))
+                detail = f"{num_positions} positions (need {min_pos}+)"
+            else:
+                score = max(0, int(100 - (num_positions - max_pos) * 15))
+                detail = f"{num_positions} positions (max {max_pos})"
+
+        elif rule_id == "crypto_limit":
+            max_pct = rule["max_crypto_pct"]
+            if crypto_pct <= max_pct:
+                score = 100
+                detail = f"Crypto {crypto_pct:.1f}% (limit {max_pct}%)"
+            else:
+                score = max(0, int(100 - (crypto_pct - max_pct) * 5))
+                detail = f"Crypto {crypto_pct:.1f}% EXCEEDS {max_pct}% limit"
+
+        elif rule_id == "crypto_heavy":
+            min_pct = rule.get("min_crypto_pct", 60)
+            max_pct = rule.get("max_crypto_pct", 80)
+            if min_pct <= crypto_pct <= max_pct:
+                score = 100
+                detail = f"Crypto {crypto_pct:.1f}% (target {min_pct}-{max_pct}%)"
+            elif crypto_pct < min_pct:
+                score = max(0, int(crypto_pct / min_pct * 100))
+                detail = f"Crypto {crypto_pct:.1f}% (need {min_pct}%+)"
+            else:
+                score = max(0, int(100 - (crypto_pct - max_pct) * 3))
+                detail = f"Crypto {crypto_pct:.1f}% (target max {max_pct}%)"
+
+        elif rule_id == "low_turnover":
+            max_trades = rule["max_daily_trades"]
+            if avg_daily_trades <= max_trades:
+                score = 100
+            else:
+                score = max(0, int(100 - (avg_daily_trades - max_trades) * 20))
+            detail = f"{avg_daily_trades:.1f} trades/day (max {max_trades})"
+
+        elif rule_id == "high_turnover":
+            min_trades = rule["min_daily_trades"]
+            if avg_daily_trades >= min_trades:
+                score = 100
+            else:
+                score = max(0, int(avg_daily_trades / min_trades * 100))
+            detail = f"{avg_daily_trades:.1f} trades/day (min {min_trades})"
+
+        elif rule_id == "module_alignment":
+            required = rule["required_modules"]
+            if not module_counts:
+                score = 50  # no data yet
+                detail = "No recent trades to evaluate"
+            else:
+                total_module_uses = sum(module_counts.values())
+                required_uses = sum(module_counts.get(m, 0) for m in required)
+                if total_module_uses > 0:
+                    pct = required_uses / total_module_uses * 100
+                    score = min(100, int(pct * 2))  # 50%+ usage = 100
+                    detail = f"{', '.join(required)}: {pct:.0f}% of module usage"
+                else:
+                    score = 50
+                    detail = "No module data"
+
+        elif rule_id == "buys_dips":
+            # Check if buy trades mention oversold/low RSI in reasoning
+            buys = [tx for tx in transactions if tx.get("side") == "buy"]
+            if not buys:
+                score = 50
+                detail = "No recent buys to evaluate"
+            else:
+                dip_keywords = ["oversold", "rsi", "dip", "pullback", "fear", "panic", "undervalued"]
+                dip_buys = sum(
+                    1 for tx in buys
+                    if any(kw in (tx.get("reasoning") or "").lower() for kw in dip_keywords)
+                )
+                pct = dip_buys / len(buys) * 100
+                score = min(100, int(pct * 1.5))
+                detail = f"{dip_buys}/{len(buys)} buys mention dip/oversold signals"
+
+        elif rule_id == "has_tech":
+            if tech_value > 0:
+                tech_pct = tech_value / total_value * 100 if total_value > 0 else 0
+                score = min(100, int(tech_pct * 10))  # 10%+ = 100
+                detail = f"Tech stocks: {tech_pct:.1f}% of portfolio"
+            else:
+                score = 0
+                detail = "No tech stock hedges"
+
+        results.append({
+            "rule": rule["label"],
+            "score": score,
+            "detail": detail,
+        })
+
+    # Overall grade
+    if results:
+        avg_score = sum(r["score"] for r in results) / len(results)
+    else:
+        avg_score = 0
+
+    if avg_score >= 80:
+        grade = "A"
+    elif avg_score >= 60:
+        grade = "B"
+    elif avg_score >= 40:
+        grade = "C"
+    elif avg_score >= 20:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return {
+        "trader_id": trader_id,
+        "display_name": display_name,
+        "personality": personality_key,
+        "overall_score": round(avg_score, 1),
+        "grade": grade,
+        "rules": results,
+        "meta": {
+            "cash_pct": round(cash_pct, 1),
+            "crypto_pct": round(crypto_pct, 1),
+            "num_positions": num_positions,
+            "avg_daily_trades": round(avg_daily_trades, 1),
+            "total_value": round(total_value, 2),
+            "transactions_analyzed": len(transactions),
+        },
+    }
+
+
+async def get_all_discipline_scores() -> dict:
+    """Get discipline scores for all AI traders."""
+    db = get_supabase_admin()
+    profiles = (
+        db.table("profiles")
+        .select("id, display_name")
+        .eq("is_ai", True)
+        .execute()
+    )
+    if not profiles.data:
+        return {"traders": []}
+
+    results = []
+    for p in profiles.data:
+        score = await compute_discipline_score(p["id"])
+        if "error" not in score:
+            results.append(score)
+
+    # Sort by overall score descending
+    results.sort(key=lambda x: x["overall_score"], reverse=True)
+
+    return {
+        "traders": results,
+        "avg_discipline": round(
+            sum(r["overall_score"] for r in results) / max(len(results), 1), 1
+        ),
+    }

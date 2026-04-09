@@ -4,6 +4,7 @@ from app.services.analytics import (
     get_trader_analytics, get_ai_comparison, get_model_deep_dive,
     get_module_attribution, get_convergence_quality,
     get_reflection_trends, get_trade_reasoning, _model_label, _clean_display_name,
+    compute_discipline_score, get_all_discipline_scores,
 )
 from app.services.backtest import (
     get_benchmark_comparison, get_enhancement_comparison,
@@ -118,6 +119,21 @@ async def convergence_quality_endpoint(
         days=days, outcome_horizon=outcome_horizon,
         convergence_threshold=threshold,
     )
+
+
+@router.get("/discipline")
+async def discipline_scores():
+    """Trade discipline scores for all AI traders — do they follow their strategies?"""
+    return await get_all_discipline_scores()
+
+
+@router.get("/discipline/{trader_id}")
+async def trader_discipline(trader_id: str):
+    """Discipline score for a single AI trader."""
+    result = await compute_discipline_score(trader_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/model-deep-dive")
