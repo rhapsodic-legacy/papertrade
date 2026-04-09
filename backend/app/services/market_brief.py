@@ -1321,36 +1321,46 @@ async def _fetch_yield_curve() -> dict | None:
 
 async def _fetch_treasury_yields_yahoo() -> dict:
     """Fallback: fetch approximate Treasury yields from Yahoo Finance
-    using Treasury ETF prices (^TNX for 10Y, ^TYX for 30Y).
+    using Treasury index symbols (^TNX for 10Y, ^TYX for 30Y, ^FVX for 5Y).
     These Yahoo symbols report yields directly as prices."""
     result: dict = {}
-    symbols = {"^TNX": "10Y", "^TYX": "30Y"}
+    # Use URL-encoded ^ (%5E) to avoid encoding issues
+    symbols = {"%5ETNX": "10Y", "%5ETYX": "30Y"}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             for symbol, label in symbols.items():
                 try:
+                    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
                     resp = await client.get(
-                        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                        url,
                         params={"range": "5d", "interval": "1d"},
                         headers={"User-Agent": "Mozilla/5.0"},
                     )
                     if resp.status_code != 200:
+                        print(f"[YIELD_CURVE_YAHOO] {symbol} HTTP {resp.status_code}")
                         continue
                     data = resp.json()
-                    chart_result = data.get("chart", {}).get("result", [{}])[0]
+                    chart = data.get("chart", {})
+                    if chart.get("error"):
+                        print(f"[YIELD_CURVE_YAHOO] {symbol} API error: {chart['error']}")
+                        continue
+                    chart_result = chart.get("result", [{}])[0]
                     closes = chart_result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
                     valid = [c for c in closes if c is not None]
                     if valid:
-                        # Yahoo ^TNX/^TYX report yield as price (e.g. 4.25 = 4.25%)
+                        rate = round(valid[-1], 3)
                         result[label] = {
-                            "rate": round(valid[-1], 3),
+                            "rate": rate,
                             "date": "",
                             "source": "Yahoo Finance",
                         }
+                        print(f"[YIELD_CURVE_YAHOO] {label}: {rate}%")
+                    else:
+                        print(f"[YIELD_CURVE_YAHOO] {symbol}: no valid closes in {len(closes)} entries")
                 except Exception as e:
-                    print(f"[YIELD_CURVE_YAHOO] {symbol} failed: {e}")
+                    print(f"[YIELD_CURVE_YAHOO] {symbol} failed: {type(e).__name__}: {e}")
     except Exception as e:
-        print(f"[YIELD_CURVE_YAHOO] Fallback fetch failed: {e}")
+        print(f"[YIELD_CURVE_YAHOO] Fallback fetch failed: {type(e).__name__}: {e}")
     return result
 
 
