@@ -525,19 +525,78 @@ async def _fetch_upcoming_earnings(api_key: str) -> list[dict]:
         return []
 
 
+_FOMC_DATES: dict[int, list[str]] = {
+    2025: [
+        "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
+        "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
+    ],
+    2026: [
+        "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
+        "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
+    ],
+}
+# Meetings with Summary of Economic Projections (dot plot) — higher market impact
+_FOMC_SEP_MONTHS = {3, 6, 9, 12}
+
+
 async def _fetch_economic_calendar(api_key: str) -> list[dict]:
-    """Fetch upcoming earnings as a proxy for market-moving economic events.
+    """Build economic calendar from FOMC schedule (hardcoded) and earnings data.
 
     The Finnhub /calendar/economic endpoint requires a paid plan.
-    Instead we surface the next week's earnings calendar (free tier)
-    plus FOMC/CPI dates when they appear in Finnhub general news,
-    giving AI traders actionable event awareness at zero extra cost.
+    Instead, we surface known high-impact macro events: FOMC decisions.
+    Earnings are handled separately in the fundamentals module.
     """
-    # Earnings calendar is already fetched separately, so this function
-    # now returns an empty list gracefully. The earnings data in the brief
-    # covers the most impactful scheduled events.
-    # TODO: When upgrading to Finnhub paid tier, restore /calendar/economic
-    return []
+    today = date.today()
+    window_end = today + timedelta(days=14)
+    events: list[dict] = []
+
+    # FOMC meeting dates
+    for year in (today.year, today.year + 1):
+        for d_str in _FOMC_DATES.get(year, []):
+            d = date.fromisoformat(d_str)
+            if today <= d <= window_end:
+                month = d.month
+                has_sep = month in _FOMC_SEP_MONTHS
+                label = "FOMC Rate Decision + Dot Plot" if has_sep else "FOMC Rate Decision"
+                events.append({
+                    "date": d_str,
+                    "event": label,
+                    "impact": 3,  # HIGH
+                    "is_today": d == today,
+                    "unit": "",
+                })
+            # Also flag day before FOMC as positioning window
+            day_before = d - timedelta(days=1)
+            if day_before == today:
+                events.append({
+                    "date": day_before.isoformat(),
+                    "event": "FOMC Eve — rate decision tomorrow, expect volatility",
+                    "impact": 2,  # MEDIUM
+                    "is_today": True,
+                    "unit": "",
+                })
+
+    # Days since last FOMC (context for rate environment)
+    all_dates = []
+    for year_dates in _FOMC_DATES.values():
+        all_dates.extend(date.fromisoformat(d) for d in year_dates)
+    past_meetings = [d for d in all_dates if d < today]
+    if past_meetings:
+        last_meeting = max(past_meetings)
+        days_since = (today - last_meeting).days
+        next_meetings = [d for d in all_dates if d >= today]
+        days_until = (min(next_meetings) - today).days if next_meetings else None
+        if days_until is not None:
+            events.insert(0, {
+                "date": today.isoformat(),
+                "event": f"Fed context: {days_since}d since last FOMC, {days_until}d until next",
+                "impact": 1,
+                "is_today": False,
+                "unit": "",
+            })
+
+    events.sort(key=lambda e: e["date"])
+    return events
 
 
 async def _fetch_insider_transactions(

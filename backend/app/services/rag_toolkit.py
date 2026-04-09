@@ -396,13 +396,23 @@ def _format_fundamentals(brief: dict) -> str:
         if insider_lines:
             sections.append("### Insider Transactions (last 30 days)\n" + "\n".join(insider_lines))
 
-    # Earnings calendar
+    # Earnings calendar with urgency signals
     earnings = brief.get("earnings_calendar", [])
     if earnings:
+        from datetime import date as _date, timedelta as _td
+        today_str = _date.today().isoformat()
+        tomorrow_str = (_date.today() + _td(days=1)).isoformat()
         earn_lines = []
         for e in earnings[:10]:
             eps_str = f" (est EPS ${e['estimate_eps']:.2f})" if e.get("estimate_eps") else ""
-            earn_lines.append(f"  {e['symbol']} reports {e['date']}{eps_str} — expect volatility")
+            e_date = e.get("date", "")
+            if e_date == today_str:
+                prefix = ">>> TODAY"
+            elif e_date == tomorrow_str:
+                prefix = ">> TOMORROW"
+            else:
+                prefix = f"  {e_date}"
+            earn_lines.append(f"{prefix}: {e['symbol']} reports{eps_str} — expect volatility, size positions accordingly")
         sections.append("### Upcoming Earnings (next 7 days)\n" + "\n".join(earn_lines))
 
     return "\n\n".join(sections)
