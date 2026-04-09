@@ -161,8 +161,8 @@ async def score_headlines(
     Returns (scored_list, aggregates_dict). On failure returns ([], {}).
     """
     settings = get_settings()
-    if not settings.mistral_api_key:
-        print("[SENTIMENT] No Mistral API key — skipping scoring")
+    if not settings.mistral_api_key and not settings.ollama_base_url:
+        print("[SENTIMENT] No LLM available (no Mistral key, no Ollama) — skipping scoring")
         return [], {}
 
     # Combine general + company headlines into one list
@@ -253,7 +253,9 @@ async def generate_market_narrative(
     to expected market impact. Returns empty string on failure.
     """
     settings = get_settings()
-    if not settings.mistral_api_key or not scored_headlines:
+    if not scored_headlines:
+        return ""
+    if not settings.mistral_api_key and not settings.ollama_base_url:
         return ""
 
     # Build context: top headlines sorted by absolute impact
