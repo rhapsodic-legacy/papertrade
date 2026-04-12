@@ -12,7 +12,13 @@ class TestHealthCheck:
     def test_health_returns_ok(self):
         resp = client.get("/api/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        data = resp.json()
+        assert data["status"] in ("ok", "degraded")
+        assert "checks" in data
+        assert "supabase" in data["checks"]
+        assert "finnhub" in data["checks"]
+        assert "mistral" in data["checks"]
+        assert "todays_brief" in data["checks"]
 
 
 class TestMarketEndpoints:

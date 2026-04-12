@@ -53,4 +53,64 @@ app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"]
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok"}
+    """Deep health check: verify Supabase, Finnhub, Mistral, and today's brief."""
+    import httpx
+    from datetime import date
+    from app.config import get_settings
+
+    settings = get_settings()
+    checks: dict = {}
+
+    # 1. Supabase — lightweight query
+    try:
+        from app.services.supabase_client import get_supabase_admin
+        db = get_supabase_admin()
+        result = db.table("profiles").select("id").limit(1).execute()
+        checks["supabase"] = "ok" if result.data else "empty"
+    except Exception as e:
+        checks["supabase"] = f"error: {str(e)[:100]}"
+
+    # 2. Finnhub — quote endpoint
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(
+                "https://finnhub.io/api/v1/quote",
+                params={"symbol": "AAPL", "token": settings.finnhub_api_key},
+            )
+            data = resp.json()
+            checks["finnhub"] = "ok" if data.get("c", 0) > 0 else "no_price"
+    except Exception as e:
+        checks["finnhub"] = f"error: {str(e)[:100]}"
+
+    # 3. Mistral — lightweight models list
+    if settings.mistral_api_key:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    "https://api.mistral.ai/v1/models",
+                    headers={"Authorization": f"Bearer {settings.mistral_api_key}"},
+                )
+                checks["mistral"] = "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+        except Exception as e:
+            checks["mistral"] = f"error: {str(e)[:100]}"
+    else:
+        checks["mistral"] = "no_key"
+
+    # 4. Today's market brief
+    try:
+        from app.services.supabase_client import get_supabase_admin
+        db = get_supabase_admin()
+        today_str = date.today().isoformat()
+        brief = (
+            db.table("market_briefs")
+            .select("id, created_at")
+            .gte("created_at", f"{today_str}T00:00:00")
+            .limit(1)
+            .execute()
+        )
+        checks["todays_brief"] = "ok" if brief.data else "missing"
+    except Exception as e:
+        checks["todays_brief"] = f"error: {str(e)[:100]}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    return {"status": "ok" if all_ok else "degraded", "checks": checks}
