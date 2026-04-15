@@ -516,7 +516,7 @@ async def _call_gemini(model_id: str, system: str, user_msg: str, api_key: str) 
 
 
 async def _call_mistral(model_id: str, system: str, user_msg: str, api_key: str) -> str:
-    """Call Mistral La Plateforme API (OpenAI-compatible)."""
+    """Call Mistral La Plateforme API (OpenAI-compatible) with retry on disconnect."""
     url = "https://api.mistral.ai/v1/chat/completions"
     payload = {
         "model": model_id,
@@ -527,16 +527,30 @@ async def _call_mistral(model_id: str, system: str, user_msg: str, api_key: str)
         "temperature": 0.7,
         "max_tokens": 2048,
     }
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            url,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
-        )
-        if resp.status_code != 200:
-            raise Exception(f"Mistral {model_id} error {resp.status_code}: {resp.text[:300]}")
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    last_err = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=180) as client:
+                resp = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if resp.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    print(f"[MISTRAL] {model_id} rate-limited, waiting {wait}s (attempt {attempt + 1}/3)")
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    raise Exception(f"Mistral {model_id} error {resp.status_code}: {resp.text[:300]}")
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+            last_err = e
+            wait = 8 * (attempt + 1)
+            print(f"[MISTRAL] {model_id} connection error: {type(e).__name__}, retrying in {wait}s (attempt {attempt + 1}/3)")
+            await asyncio.sleep(wait)
+    raise Exception(f"Mistral {model_id} failed after 3 attempts: {last_err}")
 
 
 async def _call_groq(model_id: str, system: str, user_msg: str, api_key: str) -> str:
