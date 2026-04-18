@@ -73,15 +73,16 @@ async def fix_display_names():
 @router.post("/pipeline/trigger")
 async def trigger_full_pipeline(
     session: str = Query("close", description="Trading session: morning, midday, or close"),
+    steps: str = Query("all", description="Comma-separated steps to run: brief,reflections,trading,commentary or 'all'"),
 ):
-    """Single-call daily pipeline: brief → reflections → trading → commentary.
+    """Daily pipeline: brief → reflections → trading → commentary.
 
-    Call this once from your external cron. Runs everything sequentially in
-    the correct order so reflections feed into today's trades.
+    Use steps parameter to run a subset (e.g. steps=brief,reflections for
+    phase 1, then steps=trading,commentary for phase 2 after local Gemma
+    preprocessing enriches the brief).
 
     Runs synchronously within the request so Cloud Run keeps the instance
-    alive for the full duration (requires timeout >= 3600s on Cloud Run
-    and matching attempt_deadline on Cloud Scheduler)."""
+    alive for the full duration."""
     import logging
     from app.services.market_brief import compile_market_brief
     from app.services.reflection import run_reflections
@@ -91,54 +92,56 @@ async def trigger_full_pipeline(
     if session not in ("morning", "midday", "close"):
         session = "close"
 
-    results = {"session": session, "steps": {}}
-    print(f"[PIPELINE] Starting full pipeline (session={session})")
+    run_steps = {"brief", "reflections", "trading", "commentary"} if steps == "all" else {s.strip() for s in steps.split(",")}
 
-    # Step 1: Market brief
-    print("[PIPELINE] Step 1/4: Compiling market brief...")
-    try:
-        await compile_market_brief()
-        results["steps"]["brief"] = "ok"
-        print("[PIPELINE] Market brief complete")
-    except Exception as e:
-        logger.error("Pipeline brief failed: %s", e, exc_info=True)
-        results["steps"]["brief"] = f"error: {e}"
-        print(f"[PIPELINE ERROR] Brief failed: {e}")
+    results = {"session": session, "steps": {}, "requested": sorted(run_steps)}
+    print(f"[PIPELINE] Starting pipeline (session={session}, steps={sorted(run_steps)})")
 
-    # Step 2: Reflections
-    print("[PIPELINE] Step 2/4: Running trade reflections...")
-    try:
-        result = await run_reflections()
-        results["steps"]["reflections"] = f"ok: {result}"
-        print(f"[PIPELINE] Reflections complete: {result}")
-    except Exception as e:
-        logger.error("Pipeline reflections failed: %s", e, exc_info=True)
-        results["steps"]["reflections"] = f"error: {e}"
-        print(f"[PIPELINE ERROR] Reflections failed: {e}")
+    if "brief" in run_steps:
+        print("[PIPELINE] Step 1/4: Compiling market brief...")
+        try:
+            await compile_market_brief()
+            results["steps"]["brief"] = "ok"
+            print("[PIPELINE] Market brief complete")
+        except Exception as e:
+            logger.error("Pipeline brief failed: %s", e, exc_info=True)
+            results["steps"]["brief"] = f"error: {e}"
+            print(f"[PIPELINE ERROR] Brief failed: {e}")
 
-    # Step 3: AI trading (includes auto-snapshots)
-    print(f"[PIPELINE] Step 3/4: Running AI trading ({session})...")
-    try:
-        await run_ai_trading(session=session)
-        results["steps"]["trading"] = "ok"
-        print("[PIPELINE] Trading complete")
-    except Exception as e:
-        logger.error("Pipeline trading failed: %s", e, exc_info=True)
-        results["steps"]["trading"] = f"error: {e}"
-        print(f"[PIPELINE ERROR] Trading failed: {e}")
+    if "reflections" in run_steps:
+        print("[PIPELINE] Step 2/4: Running trade reflections...")
+        try:
+            result = await run_reflections()
+            results["steps"]["reflections"] = f"ok: {result}"
+            print(f"[PIPELINE] Reflections complete: {result}")
+        except Exception as e:
+            logger.error("Pipeline reflections failed: %s", e, exc_info=True)
+            results["steps"]["reflections"] = f"error: {e}"
+            print(f"[PIPELINE ERROR] Reflections failed: {e}")
 
-    # Step 4: Commentary
-    print("[PIPELINE] Step 4/4: Generating commentary...")
-    try:
-        await generate_commentary()
-        results["steps"]["commentary"] = "ok"
-        print("[PIPELINE] Commentary complete")
-    except Exception as e:
-        logger.error("Pipeline commentary failed: %s", e, exc_info=True)
-        results["steps"]["commentary"] = f"error: {e}"
-        print(f"[PIPELINE ERROR] Commentary failed: {e}")
+    if "trading" in run_steps:
+        print(f"[PIPELINE] Step 3/4: Running AI trading ({session})...")
+        try:
+            await run_ai_trading(session=session)
+            results["steps"]["trading"] = "ok"
+            print("[PIPELINE] Trading complete")
+        except Exception as e:
+            logger.error("Pipeline trading failed: %s", e, exc_info=True)
+            results["steps"]["trading"] = f"error: {e}"
+            print(f"[PIPELINE ERROR] Trading failed: {e}")
 
-    print("[PIPELINE] Full pipeline finished")
+    if "commentary" in run_steps:
+        print("[PIPELINE] Step 4/4: Generating commentary...")
+        try:
+            await generate_commentary()
+            results["steps"]["commentary"] = "ok"
+            print("[PIPELINE] Commentary complete")
+        except Exception as e:
+            logger.error("Pipeline commentary failed: %s", e, exc_info=True)
+            results["steps"]["commentary"] = f"error: {e}"
+            print(f"[PIPELINE ERROR] Commentary failed: {e}")
+
+    print("[PIPELINE] Pipeline finished")
     return {"message": "Pipeline complete", "results": results}
 
 

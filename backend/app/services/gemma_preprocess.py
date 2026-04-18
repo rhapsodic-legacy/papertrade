@@ -88,7 +88,7 @@ async def cluster_headlines(
             user_msg=prompt,
             tier="local_only",
             temperature=0.2,
-            max_tokens=2048,
+            max_tokens=8192,  # Gemma 4 is a thinking model — needs room for reasoning + output
         )
         clusters = _parse_clusters(raw)
         if clusters:
@@ -189,7 +189,7 @@ async def summarize_analyst_consensus(
             user_msg=prompt,
             tier="local_only",
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=8192,
         )
         return _parse_json_dict(raw)
     except Exception as e:
@@ -245,7 +245,7 @@ async def summarize_insider_flow(
             user_msg=prompt,
             tier="local_only",
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=8192,
         )
         return _parse_json_dict(raw)
     except Exception as e:
