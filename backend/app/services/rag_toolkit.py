@@ -350,9 +350,14 @@ def _format_fundamentals(brief: dict) -> str:
         if fund_lines:
             sections.append("### Stock Fundamentals & Risk\n" + "\n".join(fund_lines))
 
-    # Analyst recommendations
+    # Analyst recommendations — use Gemma consensus summaries when available
+    analyst_consensus = brief.get("analyst_consensus")
     recs = brief.get("analyst_recommendations", {})
-    if recs:
+    if analyst_consensus:
+        rec_lines = [f"  {sym}: {summary}" for sym, summary in analyst_consensus.items()]
+        if rec_lines:
+            sections.append("### Analyst Consensus (AI-summarized)\n" + "\n".join(rec_lines))
+    elif recs:
         rec_lines = []
         for sym, r in list(recs.items())[:20]:
             total = r["buy"] + r["hold"] + r["sell"]
@@ -365,9 +370,14 @@ def _format_fundamentals(brief: dict) -> str:
         if rec_lines:
             sections.append("### Analyst Consensus\n" + "\n".join(rec_lines))
 
-    # Insider transactions
+    # Insider transactions — use Gemma summaries when available
+    insider_summary = brief.get("insider_summary")
     insider = brief.get("insider_transactions", {})
-    if insider:
+    if insider_summary:
+        insider_lines = [f"  {sym}: {summary}" for sym, summary in insider_summary.items()]
+        if insider_lines:
+            sections.append("### Insider Activity (AI-summarized)\n" + "\n".join(insider_lines))
+    elif insider:
         insider_lines = []
         for sym, txns in insider.items():
             buys = [t for t in txns if t["side"] == "buy"]
@@ -471,31 +481,46 @@ def _format_sentiment(brief: dict, invert: bool = False) -> str:
             summary_lines.append(f"  Top categories: {', '.join(top_cats)}")
         sections.append(f"### Sentiment Summary{header_suffix}\n" + "\n".join(summary_lines))
 
-    # General market news (with inline scores when available)
-    news_items = brief.get("news", [])[:10]
-    if news_items:
-        news_lines = []
-        for n in news_items:
-            score = n.get("score")
-            prefix = f"[{score:+.2f}] " if score is not None else ""
-            if n.get("summary"):
-                news_lines.append(f"  {prefix}{n['headline']}\n    {n['summary'][:200]}")
-            else:
-                news_lines.append(f"  {prefix}{n['headline']}")
-        sections.append(f"### Market News{header_suffix}\n" + "\n".join(news_lines))
-
-    # Company-specific news (with inline scores when available)
-    company_news = brief.get("company_news", {})
-    if company_news:
-        news_lines = []
-        for sym, articles in company_news.items():
-            for a in articles:
-                score = a.get("score")
+    # News: use Gemma-clustered headlines if available, else raw headlines
+    clusters = brief.get("headline_clusters")
+    if clusters:
+        cluster_lines = []
+        for c in clusters:
+            sent = c.get("sentiment", 0)
+            syms = ", ".join(c.get("symbols", [])) if c.get("symbols") else ""
+            sym_str = f" [{syms}]" if syms else ""
+            cluster_lines.append(
+                f"  **{c['theme']}** ({c['count']} articles, sentiment {sent:+.2f}){sym_str}"
+            )
+            for h in c.get("headlines", [])[:2]:
+                cluster_lines.append(f"    - {h}")
+        sections.append(f"### Market News (clustered){header_suffix}\n" + "\n".join(cluster_lines))
+    else:
+        # Fallback: raw headlines
+        news_items = brief.get("news", [])[:10]
+        if news_items:
+            news_lines = []
+            for n in news_items:
+                score = n.get("score")
                 prefix = f"[{score:+.2f}] " if score is not None else ""
-                summary = f" — {a['summary']}" if a.get("summary") else ""
-                news_lines.append(f"  {sym}: {prefix}{a['headline']}{summary}")
-        if news_lines:
-            sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
+                if n.get("summary"):
+                    news_lines.append(f"  {prefix}{n['headline']}\n    {n['summary'][:200]}")
+                else:
+                    news_lines.append(f"  {prefix}{n['headline']}")
+            sections.append(f"### Market News{header_suffix}\n" + "\n".join(news_lines))
+
+        # Company-specific news (raw fallback)
+        company_news = brief.get("company_news", {})
+        if company_news:
+            news_lines = []
+            for sym, articles in company_news.items():
+                for a in articles:
+                    score = a.get("score")
+                    prefix = f"[{score:+.2f}] " if score is not None else ""
+                    summary = f" — {a['summary']}" if a.get("summary") else ""
+                    news_lines.append(f"  {sym}: {prefix}{a['headline']}{summary}")
+            if news_lines:
+                sections.append("### Company News (top movers this week)\n" + "\n".join(news_lines))
 
     # Crypto trending coins (what's getting attention right now)
     crypto_trending = brief.get("crypto_trending", [])

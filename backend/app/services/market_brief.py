@@ -1138,6 +1138,11 @@ async def compile_market_brief() -> dict:
     if previous_brief:
         brief["day_over_day"] = _compute_day_over_day(brief, previous_brief)
 
+    # 11. Gemma preprocessing: cluster headlines, summarize analysts & insiders
+    # Runs locally via Ollama — free, unlimited. Skips gracefully if unavailable.
+    from app.services.gemma_preprocess import run_preprocessing
+    await run_preprocessing(brief)
+
     # 6. Upsert into market_briefs table
     db = get_supabase_admin()
     db.table("market_briefs").upsert(
