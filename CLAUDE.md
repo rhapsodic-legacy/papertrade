@@ -4,10 +4,13 @@
 Paper trading platform with $100k virtual portfolios. 20 AI traders (5 personalities x 4 LLM models) compete alongside human users. FastAPI backend, Next.js frontend, Supabase DB.
 
 ## Tech Stack
-- **Backend:** FastAPI (Python 3.12) — `backend/`
-- **Frontend:** Next.js 14 + TypeScript + Tailwind — `frontend/`
+- **Backend:** FastAPI (Python 3.13) — `backend/`
+- **Frontend:** Next.js 16 + TypeScript + Tailwind — `frontend/`
 - **Database:** Supabase (Postgres + Auth)
-- **Hosting:** Railway (backend), Vercel (frontend) — auto-deploy on push to main
+- **Hosting:** GCP Cloud Run (backend), Vercel (frontend)
+- **CI/CD:** Cloud Build (backend, manual deploy), Vercel auto-deploy (frontend)
+- **Cron:** GCP Cloud Scheduler (2 jobs: pipeline + snapshots)
+- **Secrets:** GCP Secret Manager
 - **LLMs:** Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2 — all via Mistral HTTP API (2 API keys, 10 traders each), no SDKs. Groq/Gemini configs preserved but no longer used for trading.
 
 ## Architecture
@@ -58,13 +61,22 @@ Peer comparison prompts in `_format_peer_comparison()` are hardened to prevent A
 
 ## External Services
 
-### cron-job.org (Daily Automation)
-Two active cron jobs:
-1. **AI Pipeline** — 5:00 PM daily → `POST /api/ai/pipeline/trigger?session=close` (runs brief → reflections → trading → commentary)
-2. **Daily Snapshots** — 5:30 PM daily → `POST /api/portfolio/snapshots/trigger` (safety net for human portfolios)
+### GCP Cloud Run (Backend Hosting)
+- Service: `papertrade-backend` in `us-east1`
+- URL: `https://papertrade-backend-333762334828.us-east1.run.app`
+- Dockerfile in `backend/`, built via Cloud Build
+- Min instances: 1 (always-on), Max: 3, Memory: 512Mi, Timeout: 300s
+- Deploy: `cd backend && gcloud run deploy papertrade-backend --source . --region us-east1`
 
-### Railway Environment Variables
-`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `STARTING_BALANCE`, `FRONTEND_URL`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`, `GROQ_API_KEY`
+### GCP Cloud Scheduler (Daily Automation)
+Two scheduled jobs (timezone: America/New_York):
+1. **papertrade-pipeline** — 5:00 PM daily → `POST /api/ai/pipeline/trigger?session=close` (brief → reflections → trading → commentary)
+2. **papertrade-snapshots** — 5:30 PM daily → `POST /api/portfolio/snapshots/trigger` (safety net for human portfolios)
+
+### GCP Secret Manager
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`
+
+Plain env vars on Cloud Run: `STARTING_BALANCE=100000.00`, `FRONTEND_URL=https://papertrade-iota.vercel.app`
 
 `MISTRAL_API_KEY` powers 10 traders (Mistral Large + Mistral Medium models) plus reflections and sentiment scoring.
 `MISTRAL_API_KEY_2` powers the other 10 traders (Mistral Small + Mistral Large 2 models).
@@ -90,3 +102,6 @@ Two active cron jobs:
 - Python command is `python3` on macOS (not `python`)
 - LLM API keys default to empty string if unset — traders silently skip
 - When replacing strings across codebase, always do exhaustive search first
+- Deploy backend: `cd backend && gcloud run deploy papertrade-backend --source . --region us-east1`
+- GCP project: `project-b95d122b-3728-497b-93f`
+- Health check: `GET /api/health` — deep check of Supabase, Finnhub, Mistral, and today's brief

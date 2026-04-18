@@ -1,6 +1,4 @@
-import asyncio
-
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
 from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
@@ -74,49 +72,103 @@ async def fix_display_names():
 
 @router.post("/pipeline/trigger")
 async def trigger_full_pipeline(
-    background_tasks: BackgroundTasks,
     session: str = Query("close", description="Trading session: morning, midday, or close"),
 ):
     """Single-call daily pipeline: brief → reflections → trading → commentary.
 
     Call this once from your external cron. Runs everything sequentially in
     the correct order so reflections feed into today's trades.
-    Returns immediately; pipeline runs in the background."""
+
+    Runs synchronously within the request so Cloud Run keeps the instance
+    alive for the full duration (requires timeout >= 3600s on Cloud Run
+    and matching attempt_deadline on Cloud Scheduler)."""
+    import logging
+    from app.services.market_brief import compile_market_brief
+    from app.services.reflection import run_reflections
+
+    logger = logging.getLogger(__name__)
+
     if session not in ("morning", "midday", "close"):
         session = "close"
-    background_tasks.add_task(asyncio.to_thread, _run_full_pipeline_sync, session)
-    return {"message": f"Full pipeline triggered ({session} session) — running in background"}
+
+    results = {"session": session, "steps": {}}
+    print(f"[PIPELINE] Starting full pipeline (session={session})")
+
+    # Step 1: Market brief
+    print("[PIPELINE] Step 1/4: Compiling market brief...")
+    try:
+        await compile_market_brief()
+        results["steps"]["brief"] = "ok"
+        print("[PIPELINE] Market brief complete")
+    except Exception as e:
+        logger.error("Pipeline brief failed: %s", e, exc_info=True)
+        results["steps"]["brief"] = f"error: {e}"
+        print(f"[PIPELINE ERROR] Brief failed: {e}")
+
+    # Step 2: Reflections
+    print("[PIPELINE] Step 2/4: Running trade reflections...")
+    try:
+        result = await run_reflections()
+        results["steps"]["reflections"] = f"ok: {result}"
+        print(f"[PIPELINE] Reflections complete: {result}")
+    except Exception as e:
+        logger.error("Pipeline reflections failed: %s", e, exc_info=True)
+        results["steps"]["reflections"] = f"error: {e}"
+        print(f"[PIPELINE ERROR] Reflections failed: {e}")
+
+    # Step 3: AI trading (includes auto-snapshots)
+    print(f"[PIPELINE] Step 3/4: Running AI trading ({session})...")
+    try:
+        await run_ai_trading(session=session)
+        results["steps"]["trading"] = "ok"
+        print("[PIPELINE] Trading complete")
+    except Exception as e:
+        logger.error("Pipeline trading failed: %s", e, exc_info=True)
+        results["steps"]["trading"] = f"error: {e}"
+        print(f"[PIPELINE ERROR] Trading failed: {e}")
+
+    # Step 4: Commentary
+    print("[PIPELINE] Step 4/4: Generating commentary...")
+    try:
+        await generate_commentary()
+        results["steps"]["commentary"] = "ok"
+        print("[PIPELINE] Commentary complete")
+    except Exception as e:
+        logger.error("Pipeline commentary failed: %s", e, exc_info=True)
+        results["steps"]["commentary"] = f"error: {e}"
+        print(f"[PIPELINE ERROR] Commentary failed: {e}")
+
+    print("[PIPELINE] Full pipeline finished")
+    return {"message": "Pipeline complete", "results": results}
 
 
 @router.post("/trade/trigger")
 async def trigger_ai_trading(
-    background_tasks: BackgroundTasks,
     session: str = Query("close", description="Trading session: morning, midday, or close"),
 ):
-    """Cron: run all AI traders against today's market brief.
+    """Run all AI traders against today's market brief.
     Session determines trade focus (morning=position, midday=adjust, close=risk mgmt).
-    Returns immediately; trading runs in the background."""
+    Runs synchronously within the request (Cloud Run keeps instance alive)."""
     if session not in ("morning", "midday", "close"):
         session = "close"
-    background_tasks.add_task(asyncio.to_thread, _run_trading_sync, session)
-    return {"message": f"AI trading triggered ({session} session) — running in background"}
+    result = await run_ai_trading(session=session)
+    return {"message": f"AI trading complete ({session} session)", "result": result}
 
 
 @router.post("/reflection/trigger")
-async def trigger_reflections(background_tasks: BackgroundTasks):
-    """Daily cron: review settled trades and generate reflection lessons.
-    Run before trading so today's decisions benefit from past reflections.
-    Returns immediately; reflection runs in the background."""
-    background_tasks.add_task(asyncio.to_thread, _run_reflections_sync)
-    return {"message": "Trade reflection triggered — running in background"}
+async def trigger_reflections():
+    """Review settled trades and generate reflection lessons.
+    Run before trading so today's decisions benefit from past reflections."""
+    from app.services.reflection import run_reflections
+    result = await run_reflections()
+    return {"message": "Trade reflection complete", "result": result}
 
 
 @router.post("/commentary/trigger")
-async def trigger_commentary(background_tasks: BackgroundTasks):
-    """Daily cron: generate commentary for all AI traders.
-    Returns immediately; generation runs in the background."""
-    background_tasks.add_task(asyncio.to_thread, _run_commentary_sync)
-    return {"message": "AI commentary generation triggered — running in background"}
+async def trigger_commentary():
+    """Generate commentary for all AI traders."""
+    result = await generate_commentary()
+    return {"message": "AI commentary generation complete", "result": result}
 
 
 @router.get("/commentary")
@@ -507,112 +559,3 @@ async def ping_providers():
     return results
 
 
-def _run_trading_sync(session: str = "close"):
-    """Wrapper to run the async trading function from a sync context."""
-    import logging
-    logger = logging.getLogger(__name__)
-    print(f"[TRADE SYNC] Starting trading sync wrapper (session={session})")
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(run_ai_trading(session=session))
-        print("[TRADE SYNC] Trading sync completed successfully")
-    except Exception as e:
-        logger.error("Trading sync failed: %s", e, exc_info=True)
-        print(f"[TRADE SYNC ERROR] {type(e).__name__}: {e}")
-    finally:
-        loop.close()
-
-
-def _run_commentary_sync():
-    """Wrapper to run the async commentary function from a sync context."""
-    import logging
-    logger = logging.getLogger(__name__)
-    print("[COMMENTARY SYNC] Starting commentary sync wrapper")
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(generate_commentary())
-        print("[COMMENTARY SYNC] Commentary sync completed successfully")
-    except Exception as e:
-        logger.error("Commentary sync failed: %s", e, exc_info=True)
-        print(f"[COMMENTARY SYNC ERROR] {type(e).__name__}: {e}")
-    finally:
-        loop.close()
-
-
-def _run_reflections_sync():
-    """Wrapper to run the async reflection function from a sync context."""
-    from app.services.reflection import run_reflections
-    import logging
-    logger = logging.getLogger(__name__)
-    print("[REFLECTION SYNC] Starting reflection sync wrapper")
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(run_reflections())
-        print("[REFLECTION SYNC] Reflection sync completed successfully")
-    except Exception as e:
-        logger.error("Reflection sync failed: %s", e, exc_info=True)
-        print(f"[REFLECTION SYNC ERROR] {type(e).__name__}: {e}")
-    finally:
-        loop.close()
-
-
-def _run_full_pipeline_sync(session: str = "close"):
-    """Run the complete daily pipeline sequentially:
-    1. Market brief (data collection)
-    2. Reflections (learn from settled trades)
-    3. AI trading (decisions informed by reflections)
-    4. Commentary (daily blog posts)
-
-    Snapshots are auto-taken at the end of run_ai_trading().
-    Each step logs its own status. If one step fails, subsequent steps
-    still attempt to run (except trading depends on the brief existing).
-    """
-    import logging
-    from app.services.market_brief import compile_market_brief
-    from app.services.reflection import run_reflections
-
-    logger = logging.getLogger(__name__)
-    print(f"[PIPELINE] Starting full pipeline (session={session})")
-
-    loop = asyncio.new_event_loop()
-    try:
-        # Step 1: Market brief
-        print("[PIPELINE] Step 1/4: Compiling market brief...")
-        try:
-            loop.run_until_complete(compile_market_brief())
-            print("[PIPELINE] Market brief complete")
-        except Exception as e:
-            logger.error("Pipeline brief failed: %s", e, exc_info=True)
-            print(f"[PIPELINE ERROR] Brief failed: {e}")
-
-        # Step 2: Reflections
-        print("[PIPELINE] Step 2/4: Running trade reflections...")
-        try:
-            result = loop.run_until_complete(run_reflections())
-            print(f"[PIPELINE] Reflections complete: {result}")
-        except Exception as e:
-            logger.error("Pipeline reflections failed: %s", e, exc_info=True)
-            print(f"[PIPELINE ERROR] Reflections failed: {e}")
-
-        # Step 3: AI trading (includes auto-snapshots)
-        print(f"[PIPELINE] Step 3/4: Running AI trading ({session})...")
-        try:
-            loop.run_until_complete(run_ai_trading(session=session))
-            print("[PIPELINE] Trading complete")
-        except Exception as e:
-            logger.error("Pipeline trading failed: %s", e, exc_info=True)
-            print(f"[PIPELINE ERROR] Trading failed: {e}")
-
-        # Step 4: Commentary
-        print("[PIPELINE] Step 4/4: Generating commentary...")
-        try:
-            loop.run_until_complete(generate_commentary())
-            print("[PIPELINE] Commentary complete")
-        except Exception as e:
-            logger.error("Pipeline commentary failed: %s", e, exc_info=True)
-            print(f"[PIPELINE ERROR] Commentary failed: {e}")
-
-        print("[PIPELINE] Full pipeline finished")
-
-    finally:
-        loop.close()
