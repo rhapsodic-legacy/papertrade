@@ -11,6 +11,7 @@ from app.services.ai_trader import (
     _call_gemini,
     _call_mistral,
     _call_groq,
+    _call_nvidia_nim,
     _get_ai_portfolio,
 )
 from app.services.supabase_client import get_supabase_admin
@@ -181,6 +182,13 @@ Write your daily commentary blog post."""
                     raw = await _call_groq(
                         model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
                         settings.groq_api_key,
+                    )
+                elif api_type == "nvidia":
+                    if not settings.nvidia_api_key:
+                        raise Exception("NVIDIA_API_KEY not configured")
+                    raw = await _call_nvidia_nim(
+                        model_cfg["model_id"], COMMENTARY_SYSTEM, user_msg,
+                        settings.nvidia_api_key,
                     )
                 else:
                     raise Exception(f"Unknown API: {api_type}")

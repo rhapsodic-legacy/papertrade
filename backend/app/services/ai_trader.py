@@ -217,6 +217,12 @@ MODELS = {
         "api_key_field": "mistral_api_key",
         "model_id": "mistral-medium-latest",
     },
+    "nvidia-deepseek-r1": {
+        "label": "DeepSeek V3.2 (NVIDIA)",
+        "api": "nvidia",
+        "api_key_field": "nvidia_api_key",
+        "model_id": "deepseek-ai/deepseek-v3.2",
+    },
 }
 
 # Custom trader model (uses third Mistral API key)
@@ -550,6 +556,46 @@ async def _call_mistral(model_id: str, system: str, user_msg: str, api_key: str)
             print(f"[MISTRAL] {model_id} connection error: {type(e).__name__}, retrying in {wait}s (attempt {attempt + 1}/3)")
             await asyncio.sleep(wait)
     raise Exception(f"Mistral {model_id} failed after 3 attempts: {last_err}")
+
+
+async def _call_nvidia_nim(model_id: str, system: str, user_msg: str, api_key: str) -> str:
+    """Call NVIDIA NIM (OpenAI-compatible) with retry on rate limit / disconnect.
+    Free tier is 40 RPM per model. The endpoint lives at
+    https://integrate.api.nvidia.com/v1/chat/completions."""
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    payload = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 2048,
+    }
+    last_err = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=180) as client:
+                resp = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if resp.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    print(f"[NVIDIA] {model_id} rate-limited, waiting {wait}s (attempt {attempt + 1}/3)")
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    raise Exception(f"NVIDIA {model_id} error {resp.status_code}: {resp.text[:300]}")
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+            last_err = e
+            wait = 8 * (attempt + 1)
+            print(f"[NVIDIA] {model_id} connection error: {type(e).__name__}, retrying in {wait}s (attempt {attempt + 1}/3)")
+            await asyncio.sleep(wait)
+    raise Exception(f"NVIDIA {model_id} failed after 3 attempts: {last_err}")
 
 
 async def _call_groq(model_id: str, system: str, user_msg: str, api_key: str) -> str:
@@ -1517,6 +1563,10 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
         if not settings.groq_api_key:
             raise Exception("GROQ_API_KEY not configured")
         raw = await _call_groq(model_cfg["model_id"], system_prompt, user_msg, settings.groq_api_key)
+    elif api == "nvidia":
+        if not settings.nvidia_api_key:
+            raise Exception("NVIDIA_API_KEY not configured")
+        raw = await _call_nvidia_nim(model_cfg["model_id"], system_prompt, user_msg, settings.nvidia_api_key)
     else:
         raise Exception(f"Unknown API: {api}")
 

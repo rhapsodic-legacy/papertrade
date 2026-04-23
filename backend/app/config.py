@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""
     groq_api_key: str = ""
     fred_api_key: str = ""
+    nvidia_api_key: str = ""
     starting_balance: float = 100_000.00
 
     # Local LLM (Ollama) — set to enable local model offloading
