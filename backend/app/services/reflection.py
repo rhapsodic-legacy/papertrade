@@ -17,9 +17,34 @@ from app.services.supabase_client import get_supabase_admin
 from app.services.market_data import get_quote
 
 REFLECTION_SYSTEM = (
-    "You are a trade performance analyst reviewing settled trades for AI trading "
-    "personalities. For each trade, assess whether the decision was good or bad given "
-    "what happened, and extract a concise lesson. Respond ONLY with valid JSON."
+    "You are a trade performance analyst reviewing settled AI-trader decisions.\n"
+    "\n"
+    "For each trade you will see:\n"
+    "  - The trader's PERSONALITY (vanilla, steady_eddie, yolo_bot, contrarian_carl, crypto_chad)\n"
+    "  - The trader's STRATEGY summary (what they look for in a trade)\n"
+    "  - The original REASONING given at execution time\n"
+    "  - The price move since execution (%, current price vs trade price)\n"
+    "\n"
+    "Score each decision AGAINST THE PERSONALITY'S OWN CRITERIA — not a universal standard.\n"
+    "  A Contrarian Carl buying oversold names is expected; judge whether the bounce came.\n"
+    "  A YOLO Bot cutting fast on a dip is expected; judge whether the dip continued.\n"
+    "  A Steady Eddie holding through a wobble is expected; judge whether the thesis survived.\n"
+    "\n"
+    "outcome_score rubric (-1.0 to +1.0):\n"
+    "  +1.0 = thesis played out, profitable, exemplary for this personality\n"
+    "  +0.5 = profitable, partially right or right direction but wrong magnitude\n"
+    "   0.0 = neutral — no clear signal either way\n"
+    "  -0.5 = thesis didn't play out, but the reasoning was defensible at the time\n"
+    "  -1.0 = thesis failed AND the reasoning ignored obvious warnings the trader had access to\n"
+    "\n"
+    "LESSONS MUST BE SPECIFIC AND ACTIONABLE. Generic advice ('watch RSI', 'cut losses faster')\n"
+    "is useless — the trader already knows. Good lessons cite the actual data and name a\n"
+    "specific rule the trader should adopt:\n"
+    "  BAD:  'Pay attention to technicals'\n"
+    "  GOOD: 'AAPL was already +12% on 7d momentum with RSI 68 at entry — for Vanilla, buy\n"
+    "         signals above RSI 65 are late-cycle; require a pullback to SMA20 or skip.'\n"
+    "\n"
+    "Respond ONLY with valid JSON."
 )
 
 
@@ -85,26 +110,59 @@ def _get_settled_trades(
     ]
 
 
+_PERSONALITY_CRITERIA = {
+    "vanilla": "Balanced portfolio manager — fundamentals + technicals, 10-20% cash, no single sector >40%. Max hold 30d, stop -8%, take-profit +15%.",
+    "steady_eddie": "Conservative value (Buffett-style) — low PE, strong buy consensus, beta <1.0, dividend >1%. Avoid beta >1.5, limit crypto <5%. Max hold 45d, stop -6%, take-profit +12%.",
+    "yolo_bot": "Aggressive momentum — 7d momentum >3%, RSI 50-75, above SMA20, volume spike. Cut losses fast (>8%), concentrate in top 3-5 names. Max hold 14d, stop -5%, take-profit +10%.",
+    "contrarian_carl": "Mean-reversion/deep value — RSI <30, 7d <-5%, PE below norms, mixed consensus. Hold cash (15-25%) as dry powder. Max hold 60d, stop -10%, take-profit +20%.",
+    "crypto_chad": "Crypto-native — 60-80% crypto, mid/large-cap focus, ATH distance >30%, BTC RSI >40. Max hold 21d, stop -12%, take-profit +25%.",
+}
+
+
+def _infer_personality_key(display_name: str) -> str | None:
+    """Parse personality key out of a display_name like 'Vanilla (Mistral Large)'."""
+    name_map = {
+        "Vanilla": "vanilla",
+        "Steady Eddie": "steady_eddie",
+        "YOLO Bot": "yolo_bot",
+        "Contrarian Carl": "contrarian_carl",
+        "Crypto Chad": "crypto_chad",
+    }
+    for prefix, key in name_map.items():
+        if display_name.startswith(prefix):
+            return key
+    return None
+
+
 def _build_reflection_prompt(trades_with_prices: list[dict]) -> str:
-    """Build batch prompt for trade reflection."""
+    """Build batch prompt for trade reflection. Each trade carries the personality's
+    criteria so the LLM can judge against strategy-specific standards."""
     items = []
     for i, t in enumerate(trades_with_prices):
+        pkey = _infer_personality_key(t["display_name"])
+        criteria = _PERSONALITY_CRITERIA.get(pkey, "Unknown personality — score against general trading principles.")
         items.append({
             "id": i,
             "trader": t["display_name"],
+            "personality": pkey or "unknown",
+            "strategy": criteria,
             "side": t["side"],
             "symbol": t["symbol"],
             "trade_price": t["price"],
             "current_price": t["current_price"],
             "change_pct": t["change_pct"],
-            "original_reasoning": (t.get("reasoning") or "No reasoning recorded")[:300],
+            "original_reasoning": (t.get("reasoning") or "No reasoning recorded")[:400],
         })
 
     return (
-        "Review these settled trades. For each, provide:\n"
-        "- outcome_score: float from -1.0 (terrible decision) to +1.0 (great decision)\n"
-        "- reflection: 1-2 sentence assessment of what happened\n"
-        "- lesson: 1 sentence actionable takeaway for future trades\n\n"
+        "Review these settled trades. For each, produce:\n"
+        "  - outcome_score: float from -1.0 to +1.0 (see system rubric)\n"
+        "  - reflection: 1-3 sentences — what actually happened, and whether the\n"
+        "    original reasoning held up or broke down. Be specific, not generic.\n"
+        "  - lesson: 1-2 sentences — a named rule this trader should adopt going\n"
+        "    forward, grounded in the actual data from this trade. Must be specific\n"
+        "    enough that applying it to a future trade would change the decision.\n"
+        "\n"
         f"Trades:\n{json.dumps(items, indent=2)}\n\n"
         'Respond with: {"reflections": [{"id": 0, "outcome_score": 0.5, '
         '"reflection": "...", "lesson": "..."}, ...]}'
@@ -139,8 +197,8 @@ def _parse_reflections(raw: str, trades: list[dict]) -> list[dict]:
             "outcome_price": t["current_price"],
             "price_change_pct": t["change_pct"],
             "outcome_score": score,
-            "reflection_text": entry.get("reflection", "")[:500],
-            "lessons": entry.get("lesson", "")[:300],
+            "reflection_text": entry.get("reflection", "")[:800],
+            "lessons": entry.get("lesson", "")[:500],
         })
     return parsed
 
@@ -235,27 +293,55 @@ async def run_reflections() -> dict:
 
 
 def get_reflection_memory(db, user_id: str, limit: int = 5) -> str:
-    """Get recent reflections for a trader, formatted for trade memory."""
+    """Get high-signal reflections for a trader, formatted for trade memory.
+
+    Prefers reflections with decisive outcomes (|outcome_score| >= 0.3) because
+    those yield specific lessons; ties broken by recency. Low-signal reflections
+    (score near 0) are usually generic and don't change future behavior."""
+    # Pull a wider window so we can filter for signal
     result = (
         db.table("trade_reflections")
         .select("symbol, side, trade_price, outcome_price, price_change_pct, outcome_score, reflection_text, lessons, reflected_at")
         .eq("user_id", user_id)
         .order("reflected_at", desc=True)
-        .limit(limit)
+        .limit(max(limit * 4, 20))
         .execute()
     )
     if not result.data:
         return ""
 
-    lines = ["LESSONS FROM PAST TRADES (learn from these):"]
-    for r in result.data:
+    # Rank by absolute outcome_score (signal strength), recency as tiebreaker
+    def _signal(r: dict) -> tuple:
+        score = abs(float(r.get("outcome_score", 0) or 0))
+        recency = r.get("reflected_at", "")
+        return (score, recency)
+
+    # Prefer high-signal, fall back to all if not enough decisive ones
+    decisive = [r for r in result.data if abs(float(r.get("outcome_score", 0) or 0)) >= 0.3]
+    chosen = sorted(decisive, key=_signal, reverse=True)[:limit]
+    if len(chosen) < limit:
+        # Top up with recent reflections we haven't already included
+        chosen_ids = {id(c) for c in chosen}
+        for r in result.data:
+            if len(chosen) >= limit:
+                break
+            if id(r) not in chosen_ids:
+                chosen.append(r)
+
+    lines = [
+        "LESSONS FROM PAST TRADES — these are your own decisions, reviewed after the move:",
+        "Apply the named rules going forward; do not ignore them just because today feels different.",
+    ]
+    for r in chosen:
         day = r["reflected_at"][:10] if r.get("reflected_at") else "?"
         direction = "up" if r["price_change_pct"] > 0 else "down"
+        score = float(r.get("outcome_score", 0) or 0)
+        verdict = "✓ good call" if score >= 0.3 else ("✗ bad call" if score <= -0.3 else "neutral")
         lines.append(
             f"  [{day}] {r['side'].upper()} {r['symbol']} @ ${float(r['trade_price']):,.2f} "
-            f"-> ${float(r['outcome_price']):,.2f} ({r['price_change_pct']:+.1f}% {direction})"
+            f"-> ${float(r['outcome_price']):,.2f} ({r['price_change_pct']:+.1f}% {direction}, {verdict})"
         )
         if r.get("lessons"):
-            lines.append(f"    LESSON: {r['lessons']}")
+            lines.append(f"    RULE: {r['lessons']}")
 
     return "\n".join(lines)

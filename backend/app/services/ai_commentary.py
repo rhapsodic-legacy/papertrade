@@ -13,6 +13,7 @@ from app.services.ai_trader import (
     _call_groq,
     _call_nvidia_nim,
     _get_ai_portfolio,
+    _record_pipeline_timing,
 )
 from app.services.supabase_client import get_supabase_admin
 from app.services.analytics import _clean_display_name, _model_label
@@ -59,8 +60,10 @@ async def generate_commentary() -> dict:
     if not ai_profiles.data:
         return {"error": "No AI traders found."}
 
+    from datetime import datetime, timezone
     results = []
     for profile in ai_profiles.data:
+        started_at = datetime.now(timezone.utc)
         user_id = profile["id"]
         display_name = profile["display_name"]
         model_key = profile.get("ai_model", "")
@@ -92,6 +95,12 @@ async def generate_commentary() -> dict:
                 "status": "skipped",
                 "reason": "unknown personality or model",
             })
+            _record_pipeline_timing(
+                db, phase="commentary", user_id=user_id, display_name=display_name,
+                model_key=model_key, personality_key=personality_key,
+                started_at=started_at, completed_at=datetime.now(timezone.utc),
+                status="skipped", error_message="unknown personality or model",
+            )
             continue
 
         # Check if commentary already exists for today
@@ -104,6 +113,12 @@ async def generate_commentary() -> dict:
         )
         if existing.data:
             results.append({"trader": display_name, "status": "already_exists"})
+            _record_pipeline_timing(
+                db, phase="commentary", user_id=user_id, display_name=display_name,
+                model_key=model_key, personality_key=personality_key,
+                started_at=started_at, completed_at=datetime.now(timezone.utc),
+                status="skipped", error_message="already exists",
+            )
             continue
 
         try:
@@ -231,6 +246,12 @@ Write your daily commentary blog post."""
                 "status": "ok",
                 "words": len(raw.split()),
             })
+            _record_pipeline_timing(
+                db, phase="commentary", user_id=user_id, display_name=display_name,
+                model_key=model_key, personality_key=personality_key,
+                started_at=started_at, completed_at=datetime.now(timezone.utc),
+                status="ok",
+            )
 
         except Exception as e:
             results.append({
@@ -238,6 +259,12 @@ Write your daily commentary blog post."""
                 "status": "error",
                 "error": str(e)[:200],
             })
+            _record_pipeline_timing(
+                db, phase="commentary", user_id=user_id, display_name=display_name,
+                model_key=model_key, personality_key=personality_key,
+                started_at=started_at, completed_at=datetime.now(timezone.utc),
+                status="error", error_message=str(e),
+            )
 
         # Rate limit: same 35s delay as trading
         await asyncio.sleep(35)

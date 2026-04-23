@@ -56,6 +56,62 @@ async def enhancement():
     return await get_enhancement_comparison()
 
 
+@router.get("/pipeline-timings")
+async def pipeline_timings(days: int = Query(7, ge=1, le=60)):
+    """Per-trader pipeline timing data with trend aggregates.
+    Used to watch for Cloud Run timeout risk as the fleet grows."""
+    from datetime import date, timedelta
+    db = get_supabase_admin()
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    resp = (
+        db.table("pipeline_timings")
+        .select("run_date, phase, trader_name, model_key, personality_key, duration_seconds, trades_executed, status")
+        .gte("run_date", cutoff)
+        .order("run_date", desc=True)
+        .execute()
+    )
+    rows = resp.data or []
+
+    # Aggregate by run_date + phase
+    by_day: dict = {}
+    for r in rows:
+        key = (r["run_date"], r["phase"])
+        if key not in by_day:
+            by_day[key] = {"count": 0, "ok": 0, "error": 0, "skipped": 0, "total_seconds": 0.0, "max_seconds": 0.0}
+        agg = by_day[key]
+        agg["count"] += 1
+        agg[r["status"]] = agg.get(r["status"], 0) + 1
+        dur = float(r.get("duration_seconds") or 0)
+        agg["total_seconds"] += dur
+        if dur > agg["max_seconds"]:
+            agg["max_seconds"] = dur
+
+    phase_trend = [
+        {
+            "run_date": day,
+            "phase": phase,
+            "trader_count": agg["count"],
+            "ok": agg.get("ok", 0),
+            "error": agg.get("error", 0),
+            "skipped": agg.get("skipped", 0),
+            "total_seconds": round(agg["total_seconds"], 2),
+            "avg_seconds": round(agg["total_seconds"] / agg["count"], 2) if agg["count"] else 0,
+            "max_seconds": round(agg["max_seconds"], 2),
+        }
+        for (day, phase), agg in sorted(by_day.items(), reverse=True)
+    ]
+
+    # Slowest individual runs (top 10)
+    slowest = sorted(rows, key=lambda r: float(r.get("duration_seconds") or 0), reverse=True)[:10]
+
+    return {
+        "days": days,
+        "row_count": len(rows),
+        "phase_trend": phase_trend,
+        "slowest": slowest,
+    }
+
+
 @router.get("/modules")
 async def module_attribution(
     trader_id: str | None = Query(None, description="Scope to a single trader"),

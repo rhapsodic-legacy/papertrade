@@ -225,6 +225,31 @@ MODELS = {
     },
 }
 
+# Intra-personality jitter for max_hold_days. Prevents the four same-personality
+# traders from all hitting their stale-position trigger on the same day, which
+# was driving cross-model herd exits (e.g. 6 AIs all selling WMT on 2026-04-22).
+# Values are small deltas — they nudge hold periods apart without changing the
+# personality's risk profile meaningfully.
+_MODEL_HOLD_JITTER_DAYS = {
+    "gemini-flash": 0,        # Mistral Small
+    "gemini-pro": 2,          # Mistral Large 2
+    "mistral": 4,             # Mistral Large
+    "llama": 6,               # Mistral Medium
+    "nvidia-deepseek-r1": 8,  # DeepSeek V3.2
+}
+
+
+def _jittered_risk_params(base: dict, model_key: str) -> dict:
+    """Return a copy of risk_params with max_hold_days shifted by a model-specific
+    offset. Every other parameter is preserved."""
+    jitter = _MODEL_HOLD_JITTER_DAYS.get(model_key, 0)
+    if jitter == 0:
+        return dict(base)
+    params = dict(base)
+    params["max_hold_days"] = params.get("max_hold_days", 30) + jitter
+    return params
+
+
 # Custom trader model (uses third Mistral API key)
 CUSTOM_TRADER_MODEL = {
     "label": "Custom (Mistral)",
@@ -820,6 +845,52 @@ def _compute_dynamic_risk(db, user_id: str) -> dict | None:
         "equity_trend": trend,
         "recent_5d_return": round(recent_5d, 1),
     }
+
+
+def _compute_peer_exit_warnings(db, current_user_id: str, lookback_hours: int = 48) -> str:
+    """Detect when 3+ other AI traders have exited the same symbol in the recent
+    past. Returns formatted warning text (empty string if no herd signals).
+    The goal is to flag 'late herd following' before the current trader commits
+    to a sell that's just pattern-matching what peers already did."""
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+
+    profiles_resp = db.table("profiles").select("id").eq("is_ai", True).execute()
+    ai_ids = [p["id"] for p in (profiles_resp.data or []) if p["id"] != current_user_id]
+    if not ai_ids:
+        return ""
+
+    tx_resp = (
+        db.table("transactions")
+        .select("user_id, symbol, side, created_at")
+        .in_("user_id", ai_ids)
+        .eq("side", "sell")
+        .gte("created_at", cutoff)
+        .execute()
+    )
+
+    sellers_by_symbol: dict[str, set] = {}
+    for tx in (tx_resp.data or []):
+        sellers_by_symbol.setdefault(tx["symbol"], set()).add(tx["user_id"])
+
+    clusters = [(sym, len(uids)) for sym, uids in sellers_by_symbol.items() if len(uids) >= 3]
+    if not clusters:
+        return ""
+
+    clusters.sort(key=lambda x: -x[1])
+    lines = [
+        f"## ⚠ Peer Exit Alert (last {lookback_hours}h)",
+        "Multiple other AI traders have exited these names recently. If you're",
+        "about to sell any of these too, pause and check: is your thesis",
+        "independent, or are you pattern-matching what peers already did? Following",
+        "the herd late is a known loss pattern (you sell at the bottom of a",
+        "sentiment swing, then the name recovers without you).",
+        "",
+    ]
+    for sym, count in clusters[:10]:
+        lines.append(f"  {sym}: {count} other AIs sold in the last {lookback_hours}h")
+
+    return "\n".join(lines)
 
 
 def _format_cross_trader_positions(
@@ -1516,10 +1587,11 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
     personality = custom_personality if personality_key == "custom" else PERSONALITIES[personality_key]
     model_cfg = CUSTOM_TRADER_MODEL if model_key == "custom" else MODELS[model_key]
 
-    # Portfolio risk analysis (with personality-specific risk alerts + ATR stops + earnings)
-    custom_risk = personality.get("risk_params", {}) if personality_key == "custom" else None
-    risk_analysis = _compute_portfolio_risk(portfolio, personality_key, brief=brief, override_risk_params=custom_risk)
-    risk_params = personality.get("risk_params", {})
+    # Portfolio risk analysis (with personality-specific risk alerts + ATR stops + earnings).
+    # max_hold_days is jittered per model so same-personality traders don't all hit
+    # the stale-position trigger on the same day.
+    risk_params = _jittered_risk_params(personality.get("risk_params", {}), model_key)
+    risk_analysis = _compute_portfolio_risk(portfolio, personality_key, brief=brief, override_risk_params=risk_params)
 
     # Build the user message via modular toolkit
     from app.services.rag_toolkit import assemble_toolkit_prompt
@@ -1769,12 +1841,43 @@ PROVIDER_DELAYS = {
 }
 
 
+def _record_pipeline_timing(
+    db, *, phase: str, user_id: str | None, display_name: str | None,
+    model_key: str | None, personality_key: str | None,
+    started_at, completed_at, status: str, trades_executed: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Insert a row into pipeline_timings. Swallows exceptions so timing
+    failures never break the pipeline."""
+    try:
+        duration = (completed_at - started_at).total_seconds()
+        db.table("pipeline_timings").insert({
+            "run_date": started_at.date().isoformat(),
+            "phase": phase,
+            "trader_id": user_id,
+            "trader_name": display_name,
+            "model_key": model_key,
+            "personality_key": personality_key,
+            "duration_seconds": round(duration, 2),
+            "trades_executed": trades_executed,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "status": status,
+            "error_message": error_message[:500] if error_message else None,
+        }).execute()
+        print(f"[TIMING] {phase} {display_name or 'n/a'}: {duration:.1f}s ({status})")
+    except Exception as e:
+        print(f"[TIMING] record failed: {e}")
+
+
 async def _run_trader(
     db, brief: dict, profile: dict, session: str = "close",
     all_ai_positions: list[dict] | None = None,
     performance_intel: dict[str, str] | None = None,
 ) -> dict:
     """Run a single AI trader: get portfolio, ask LLM, execute trades."""
+    from datetime import datetime, timezone
+    started_at = datetime.now(timezone.utc)
     user_id = profile["id"]
     display_name = profile["display_name"]
     model_key = profile.get("ai_model", "")
@@ -1816,6 +1919,12 @@ async def _run_trader(
 
     if not personality_key or (model_key not in MODELS and model_key != "custom"):
         print(f"[PIPELINE SKIP] {display_name}: unknown personality or model ({model_key})")
+        _record_pipeline_timing(
+            db, phase="trading", user_id=user_id, display_name=display_name,
+            model_key=model_key, personality_key=personality_key,
+            started_at=started_at, completed_at=datetime.now(timezone.utc),
+            status="skipped", error_message="unknown personality or model",
+        )
         return {
             "trader": display_name,
             "status": "skipped",
@@ -1834,6 +1943,12 @@ async def _run_trader(
     )
     if existing.data:
         print(f"[PIPELINE SKIP] {display_name}: already traded today")
+        _record_pipeline_timing(
+            db, phase="trading", user_id=user_id, display_name=display_name,
+            model_key=model_key, personality_key=personality_key,
+            started_at=started_at, completed_at=datetime.now(timezone.utc),
+            status="skipped", error_message="already traded today",
+        )
         return {
             "trader": display_name,
             "status": "skipped",
@@ -1915,10 +2030,16 @@ async def _run_trader(
                 all_signals, stock_vol, personality_key, risk_params, total_value, portfolio["cash"],
             )
 
-        # Cross trader awareness
+        # Cross trader awareness + peer exit warnings
         cross_trader_text = ""
         if all_ai_positions:
             cross_trader_text = _format_cross_trader_positions(all_ai_positions, user_id, brief)
+        try:
+            peer_exit = _compute_peer_exit_warnings(db, user_id)
+            if peer_exit:
+                cross_trader_text = f"{cross_trader_text}\n\n{peer_exit}" if cross_trader_text else peer_exit
+        except Exception as e:
+            print(f"[PEER_EXIT] {user_id}: warning computation failed: {e}")
 
         # Performance intelligence (self-assessment + peer learning)
         perf_intel_text = ""
@@ -1955,7 +2076,7 @@ async def _run_trader(
         trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 
         # Execute trades (with ATR-based position cap)
-        trade_risk_params = personality.get("risk_params", {})
+        trade_risk_params = _jittered_risk_params(personality.get("risk_params", {}), model_key)
         executed = []
         for trade in trades:
             result = await _execute_ai_trade(
@@ -1973,6 +2094,12 @@ async def _run_trader(
                 executed.append(entry)
 
         print(f"[PIPELINE OK] {display_name}: {len(trades)} proposed, {len(executed)} executed")
+        _record_pipeline_timing(
+            db, phase="trading", user_id=user_id, display_name=display_name,
+            model_key=model_key, personality_key=personality_key,
+            started_at=started_at, completed_at=datetime.now(timezone.utc),
+            status="ok", trades_executed=len(executed),
+        )
         return {
             "trader": display_name,
             "status": "ok",
@@ -1984,6 +2111,12 @@ async def _run_trader(
     except Exception as e:
         logger.error("Trader %s failed: %s", display_name, e)
         print(f"[PIPELINE ERROR] Trader {display_name} failed: {e}")
+        _record_pipeline_timing(
+            db, phase="trading", user_id=user_id, display_name=display_name,
+            model_key=model_key, personality_key=personality_key,
+            started_at=started_at, completed_at=datetime.now(timezone.utc),
+            status="error", error_message=str(e),
+        )
         return {
             "trader": display_name,
             "status": "error",
