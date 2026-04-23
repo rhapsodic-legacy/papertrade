@@ -1167,6 +1167,51 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
     _add_record(sell_records, "sell")
     _add_record(buy_records, "buy")
 
+    # Mark-to-market: attribute still-open positions using the latest brief's
+    # current prices. Without this, modules whose trades are mostly unrealized
+    # (e.g. signal_ranker — 247 of 267 trades open in recent data) get judged
+    # only on the rare round-trip, which skews heavily negative when sells
+    # happen to be the trigger-module.
+    from app.services.market_brief import get_latest_brief
+
+    brief = await get_latest_brief()
+    price_map: dict[str, float] = {}
+    if brief:
+        for s in (brief.get("stocks") or []):
+            if s.get("price"):
+                price_map[s["symbol"]] = float(s["price"])
+        for c in (brief.get("crypto") or []):
+            if c.get("price"):
+                price_map[c["symbol"]] = float(c["price"])
+
+    open_buy_records: list[dict] = []
+    for uid, syms in positions2.items():
+        for sym, pos in syms.items():
+            if pos["qty"] > 0 and sym in price_map:
+                pnl = (price_map[sym] - pos["cost_basis"]) * pos["qty"]
+                open_buy_records.append({"pnl": pnl, "modules": pos.get("buy_modules", [])})
+
+    # Extend module_stats with open-buy tracking
+    for rec in open_buy_records:
+        for mod in rec["modules"]:
+            if mod not in module_stats:
+                module_stats[mod] = {
+                    "sell_wins": 0, "sell_losses": 0, "sell_total_pnl": 0.0,
+                    "buy_wins": 0, "buy_losses": 0, "buy_total_pnl": 0.0,
+                    "open_wins": 0, "open_losses": 0, "open_total_pnl": 0.0,
+                    "total_trades": 0,
+                }
+            stats = module_stats[mod]
+            if "open_wins" not in stats:
+                stats["open_wins"] = 0
+                stats["open_losses"] = 0
+                stats["open_total_pnl"] = 0.0
+            if rec["pnl"] > 0:
+                stats["open_wins"] += 1
+            else:
+                stats["open_losses"] += 1
+            stats["open_total_pnl"] += rec["pnl"]
+
     # Format results
     from app.services.rag_toolkit import RAG_MODULES
 
@@ -1174,7 +1219,17 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
     for mod, stats in module_stats.items():
         sell_total = stats["sell_wins"] + stats["sell_losses"]
         buy_total = stats["buy_wins"] + stats["buy_losses"]
+        open_wins = stats.get("open_wins", 0)
+        open_losses = stats.get("open_losses", 0)
+        open_total = open_wins + open_losses
+        open_pnl = stats.get("open_total_pnl", 0.0)
         meta = RAG_MODULES.get(mod, {})
+
+        # Full-buy view merges realized + unrealized buys
+        full_buy_wins = stats["buy_wins"] + open_wins
+        full_buy_losses = stats["buy_losses"] + open_losses
+        full_buy_total = full_buy_wins + full_buy_losses
+        full_buy_pnl = stats["buy_total_pnl"] + open_pnl
 
         modules_result[mod] = {
             "label": meta.get("label", mod),
@@ -1185,14 +1240,20 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
             "buy_win_rate": round(stats["buy_wins"] / buy_total * 100, 1) if buy_total > 0 else 0,
             "buy_trades": buy_total,
             "buy_total_pnl": round(stats["buy_total_pnl"], 2),
+            "open_buy_win_rate": round(open_wins / open_total * 100, 1) if open_total > 0 else 0,
+            "open_buy_trades": open_total,
+            "open_buy_pnl_mtm": round(open_pnl, 2),
+            "full_buy_win_rate": round(full_buy_wins / full_buy_total * 100, 1) if full_buy_total > 0 else 0,
+            "full_buy_trades": full_buy_total,
+            "full_buy_pnl": round(full_buy_pnl, 2),
             "combined_win_rate": round(
-                (stats["sell_wins"] + stats["buy_wins"]) /
-                max(sell_total + buy_total, 1) * 100, 1
+                (stats["sell_wins"] + full_buy_wins) /
+                max(sell_total + full_buy_total, 1) * 100, 1
             ),
-            "combined_pnl": round(stats["sell_total_pnl"] + stats["buy_total_pnl"], 2),
+            "combined_pnl": round(stats["sell_total_pnl"] + full_buy_pnl, 2),
         }
 
-    # Sort by combined P&L
+    # Sort by combined P&L (now includes mark-to-market on open positions)
     modules_result = dict(
         sorted(modules_result.items(), key=lambda x: x[1]["combined_pnl"], reverse=True)
     )
@@ -1201,6 +1262,7 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
         "modules": modules_result,
         "total_sells_analyzed": len(sell_records),
         "total_buys_analyzed": len(buy_records),
+        "total_open_buys_analyzed": len(open_buy_records),
     }
 
 

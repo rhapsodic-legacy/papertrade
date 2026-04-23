@@ -1043,6 +1043,15 @@ def _format_signal_ranker(brief: dict) -> str:
         "the score itself. A stock at +60 with zero conflicts is different from",
         "one at +60 with three strong bearish flags that happen to be outweighed.",
         "",
+        "IMPORTANT — asymmetry in sell signals: A bearish flip (RSI > 70, weakening",
+        "SMA trend, or a sudden negative composite) in a sustained uptrend is often a",
+        "CONTINUATION signal, not a reversal. These flags identify overbought",
+        "conditions, not tops. Selling a strong winner purely because its ranker",
+        "score rolled over has historically left meaningful upside on the table.",
+        "If you're tempted to exit on a bearish flip, require confirming evidence:",
+        "a catalyst (earnings miss, sector downgrade), a broken structural level,",
+        "or a thesis that has actually played out.",
+        "",
     ]
 
     # Separate stocks and crypto
@@ -1411,6 +1420,8 @@ def assemble_toolkit_prompt(
         "correlations": agentic_data.get("correlations", []),
         "allocation": agentic_data.get("allocation", {}),
         "sizing": agentic_data.get("sizing"),
+        "trade_context": agentic_data.get("trade_context"),
+        "dynamic_risk": agentic_data.get("dynamic_risk"),
     }
 
     for entry in sorted_toolkit:

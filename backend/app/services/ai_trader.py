@@ -147,7 +147,6 @@ PERSONALITIES = {
             {"module": "macro", "weight": 6},
             {"module": "options_flow", "weight": 5},
             {"module": "optimizer", "weight": 4},
-            {"module": "signal_ranker", "weight": 3},
             {"module": "trade_context", "weight": 3},
             {"module": "yield_curve", "weight": 2},
             {"module": "dynamic_risk", "weight": 1},
