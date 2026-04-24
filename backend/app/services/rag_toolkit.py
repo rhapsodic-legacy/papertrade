@@ -109,6 +109,13 @@ RAG_MODULES: dict[str, dict] = {
         "icon": "git-branch",
         "color": "emerald",
     },
+    "expert_opinion": {
+        "label": "Expert Opinion",
+        "description": "Daily digest from independent analysts — consensus, conflicts, high-conviction calls",
+        "always_included": False,
+        "icon": "brain",
+        "color": "rose",
+    },
 }
 
 
@@ -129,6 +136,7 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "dynamic_risk": ["drawdown", "equity curve", "size multiplier", "defensive", "capital preservation"],
     "options_flow": ["vix", "volatility index", "fear", "complacen", "options flow", "hedging", "cboe", "market stress"],
     "yield_curve": ["yield curve", "treasury", "2y", "10y", "spread", "inverted", "recession", "fed funds", "rate cut", "rate hike"],
+    "expert_opinion": ["analyst opinion", "expert", "digest", "consensus view", "independent analyst", "wolf street", "bankless", "messari", "calculated risk"],
 }
 
 
@@ -602,13 +610,39 @@ def _format_momentum(brief: dict) -> str:
     """Top gainers/losers and momentum data from technicals."""
     sections = []
 
+    movers_narrative = brief.get("movers_narrative", {})
+
     gainers = brief.get("top_gainers", [])
     if gainers:
-        sections.append("### Top Gainers (momentum leaders)\n" + json.dumps(gainers, indent=2))
+        if movers_narrative:
+            gainer_lines = []
+            for g in gainers:
+                sym = g.get("symbol", "")
+                chg = g.get("change_pct", 0)
+                narrative = movers_narrative.get(sym)
+                if narrative:
+                    gainer_lines.append(f"  {sym} ({chg:+.1f}%): {narrative}")
+                else:
+                    gainer_lines.append(f"  {sym} ({chg:+.1f}%): no catalyst identified")
+            sections.append("### Top Gainers (why they moved)\n" + "\n".join(gainer_lines))
+        else:
+            sections.append("### Top Gainers (momentum leaders)\n" + json.dumps(gainers, indent=2))
 
     losers = brief.get("top_losers", [])
     if losers:
-        sections.append("### Top Losers (potential reversals or falling knives)\n" + json.dumps(losers, indent=2))
+        if movers_narrative:
+            loser_lines = []
+            for l in losers:
+                sym = l.get("symbol", "")
+                chg = l.get("change_pct", 0)
+                narrative = movers_narrative.get(sym)
+                if narrative:
+                    loser_lines.append(f"  {sym} ({chg:+.1f}%): {narrative}")
+                else:
+                    loser_lines.append(f"  {sym} ({chg:+.1f}%): no catalyst identified")
+            sections.append("### Top Losers (why they dropped)\n" + "\n".join(loser_lines))
+        else:
+            sections.append("### Top Losers (potential reversals or falling knives)\n" + json.dumps(losers, indent=2))
 
     # Extract crypto market data (rank, volume, ATH distance, momentum) for context
     crypto_data = brief.get("crypto_market_data", {})
@@ -1316,6 +1350,80 @@ def _format_yield_curve(brief: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Module: Expert Opinion — independent analyst digest
+# ---------------------------------------------------------------------------
+
+def _format_expert_opinion(brief: dict, invert: bool = False) -> str:
+    """Format the expert opinion digest from analyst blog scraping pipeline."""
+    digest = brief.get("expert_opinion_digest")
+    if not digest:
+        return ""
+
+    header_suffix = " (CONTRARIAN LENS)" if invert else ""
+
+    lines = [
+        f"### Expert Opinion Digest{header_suffix}",
+        "These are opinions from external independent analysts (Wolf Street, Calculated Risk,",
+        "Bankless, Messari, The Diff, and others). They may be wrong, biased, or outdated.",
+        "Treat as ONE perspective among many. Cross-reference against your raw data before acting.",
+    ]
+
+    if invert:
+        lines.append(
+            "CONTRARIAN LENS: Where these analysts see consensus, you see a crowded trade. "
+            "Where they see risk, you see opportunity. Their conviction is your contrarian signal."
+        )
+
+    lines.append("")
+    lines.append(digest)
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Discipline report card (always-on, not a selectable module)
+# ---------------------------------------------------------------------------
+
+def _format_discipline(discipline: dict | None) -> str:
+    """Format the trade discipline report card for the AI prompt."""
+    if not discipline:
+        return ""
+
+    grade = discipline.get("grade", "?")
+    score = discipline.get("overall_score", 0)
+    scores = discipline.get("scores", {})
+    violations = discipline.get("violations", [])
+
+    lines = [
+        f"## Your Discipline Report Card: {grade} ({score}/100)",
+        "This grades how well you follow YOUR OWN risk rules. Fix violations before making new trades.",
+    ]
+
+    # Score breakdown
+    breakdown = []
+    for category, val in scores.items():
+        label = category.replace("_", " ").title()
+        icon = "pass" if val >= 75 else "FAIL" if val < 50 else "warn"
+        breakdown.append(f"  {label}: {val}/100 [{icon}]")
+    lines.append("\n".join(breakdown))
+
+    if violations:
+        lines.append("\nViolations (address these BEFORE making new buys):")
+        for v in violations:
+            lines.append(f"  - {v}")
+
+    if grade in ("A",):
+        lines.append("\nYou're following your rules well. Keep it up.")
+    elif grade in ("D", "F"):
+        lines.append(
+            "\nYour discipline is poor. Focus ENTIRELY on fixing violations "
+            "before adding any new positions. Sell first, buy later."
+        )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Formatter dispatch table
 # ---------------------------------------------------------------------------
 
@@ -1336,6 +1444,7 @@ _MODULE_FORMATTERS = {
     "dynamic_risk": lambda ctx: _format_dynamic_risk(ctx),
     "options_flow": lambda ctx: _format_options_flow(ctx["brief"]),
     "yield_curve": lambda ctx: _format_yield_curve(ctx["brief"]),
+    "expert_opinion": lambda ctx: _format_expert_opinion(ctx["brief"], invert=ctx.get("invert", False)),
 }
 
 
@@ -1450,15 +1559,27 @@ def assemble_toolkit_prompt(
     if perf_intel:
         parts.append(perf_intel)
 
+    # Discipline report card (always-on nudge)
+    discipline = agentic_data.get("discipline")
+    if discipline:
+        disc_text = _format_discipline(discipline)
+        if disc_text:
+            parts.append(disc_text)
+
     # Trading memory
     parts.append(f"## Your Trading Memory\n{trade_memory}")
 
     # Final instruction
     parts.append(
         "Based on ALL the data above — including any pattern recognition, "
-        "correlation warnings, and optimizer suggestions — what trades do you want "
-        "to make today? Address any MANDATORY RISK ACTIONS first, then follow your "
-        "strategy's BUY/SELL criteria using the data modules provided."
+        "correlation warnings, optimizer suggestions, and SUGGESTED POSITION SIZES — "
+        "what trades do you want to make today?\n\n"
+        "**Priority order:**\n"
+        "1. Address any MANDATORY RISK ACTIONS first (stop-loss, take-profit, overweight)\n"
+        "2. Follow your strategy's BUY/SELL criteria using the data modules provided\n"
+        "3. For NEW BUYS: use the suggested position sizes from the optimizer if available — "
+        "they account for signal strength, volatility, and your personality's risk budget\n"
+        "4. In your reasoning, cite which news cluster or specific data drove each decision"
     )
 
     return "\n\n".join(parts)

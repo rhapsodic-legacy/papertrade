@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
+from app.services.conditional_orders import get_all_orders, cancel_order, check_and_execute_orders
 from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
 from app.services.analytics import _model_label, _clean_display_name
 from app.services.rag_toolkit import get_personality_toolkit_info, RAG_MODULES
@@ -562,3 +563,32 @@ async def ping_providers():
     return results
 
 
+# ---------------------------------------------------------------------------
+# Conditional Orders
+# ---------------------------------------------------------------------------
+
+@router.get("/conditional-orders/{trader_id}")
+async def get_conditional_orders(
+    trader_id: str,
+    status: str | None = Query(default=None, description="Filter by status: pending, executed, expired, etc."),
+    limit: int = Query(default=50, le=100),
+):
+    """Get conditional orders for an AI trader."""
+    orders = get_all_orders(trader_id, status=status, limit=limit)
+    return {"orders": orders, "count": len(orders)}
+
+
+@router.delete("/conditional-orders/{trader_id}/{order_id}")
+async def delete_conditional_order(trader_id: str, order_id: str):
+    """Cancel a pending conditional order."""
+    cancelled = cancel_order(order_id, trader_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Order not found or not pending")
+    return {"status": "cancelled", "order_id": order_id}
+
+
+@router.post("/conditional-orders/check")
+async def trigger_conditional_check():
+    """Manually trigger a conditional order check cycle (same as intraday subagent)."""
+    result = await check_and_execute_orders()
+    return result

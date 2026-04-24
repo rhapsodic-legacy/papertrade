@@ -45,9 +45,17 @@ async def _call_ollama(
         message = data["choices"][0]["message"]
         content = message.get("content", "")
         # Gemma 4 is a thinking model — if content is empty but reasoning exists,
-        # the model spent all tokens on thinking. Return whatever we got.
+        # the model spent all tokens on thinking.
         if not content and message.get("reasoning"):
-            print(f"[LLM] Warning: Ollama {model} returned empty content (thinking used all tokens). Increase max_tokens.")
+            # Try to salvage: sometimes the JSON answer appears at the end of thinking
+            reasoning = message["reasoning"]
+            print(f"[LLM] Warning: Ollama {model} returned empty content (thinking used all tokens, {len(reasoning)} chars reasoning). Increase max_tokens.")
+            # Check if the reasoning ends with valid-looking JSON
+            for marker in ["```", "]", "}}"]:
+                idx = reasoning.rfind(marker)
+                if idx > 0:
+                    # Return the tail — the parser will try to extract JSON from it
+                    return reasoning[max(0, idx - 5000):]
         return content
 
 

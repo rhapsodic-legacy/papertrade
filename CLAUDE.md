@@ -9,18 +9,34 @@ Paper trading platform with $100k virtual portfolios. 20 AI traders (5 personali
 - **Database:** Supabase (Postgres + Auth)
 - **Hosting:** GCP Cloud Run (backend), Vercel (frontend)
 - **CI/CD:** Cloud Build (backend, manual deploy), Vercel auto-deploy (frontend)
-- **Cron:** GCP Cloud Scheduler (2 jobs: pipeline + snapshots)
+- **Cron:** GCP Cloud Scheduler (2 jobs) + local launchd (Gemma preprocessing)
 - **Secrets:** GCP Secret Manager
+- **Local AI:** Ollama + Gemma 4 e2b for free preprocessing (headline clustering, analyst consensus, insider flow, movers narrative)
 - **LLMs:** Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2 — all via Mistral HTTP API (2 API keys, 10 traders each), no SDKs. Groq/Gemini configs preserved but no longer used for trading.
 
 ## Architecture
 
-### AI Trader Pipeline
-Single daily pipeline triggered via `POST /api/ai/pipeline/trigger?session=close`:
-1. **Market Brief** (`market_brief.py`) — fetches stock/crypto quotes, news, fundamentals, technicals, sentiment, insider trades from Finnhub/CoinGecko/Yahoo
+### AI Trader Pipeline (3-Phase)
+The daily pipeline is split across Cloud Run and local Mac to leverage free Gemma preprocessing:
+
+**Phase 1 — Cloud Run (5:00 PM ET)**
+`POST /api/ai/pipeline/trigger?steps=brief,reflections`
+1. **Market Brief** (`market_brief.py`) — fetches stock/crypto quotes, news, fundamentals, technicals, sentiment, insider trades from Finnhub/CoinGecko/Yahoo. Runs Gemma preprocessing if Ollama available (Cloud Run: no; local: yes).
 2. **Reflections** (`reflection.py`) — reviews settled trades (3-5 days old, >3% price move) via Mistral, extracts lessons
-3. **Trading** (`ai_trader.py`) — each AI gets personalized RAG prompt, makes buy/sell decisions. Auto-snapshots all portfolios after.
+
+**Phase 2 — Local Mac via launchd (5:05 PM ET)**
+`backend/scripts/local_preprocess.py` — fetches today's brief from Supabase, runs Gemma 4 e2b preprocessing via Ollama, updates the brief in-place. Skips if preprocessing already exists. Four preprocessors run in parallel:
+1. **Headline Clustering** — groups 15-25 headlines into 3-6 themed clusters with sentiment scores
+2. **Analyst Consensus** — condenses per-symbol analyst recs into 1-line narratives
+3. **Insider Flow** — aggregates insider buy/sell patterns into actionable summaries
+4. **Movers Narrative** — explains *why* top gainers/losers moved (cross-references news, technicals, fundamentals)
+
+**Phase 3 — Cloud Run (5:10 PM ET)**
+`POST /api/ai/pipeline/trigger?steps=trading,commentary`
+3. **Trading** (`ai_trader.py`) — each AI gets personalized RAG prompt with Gemma-enriched data, makes buy/sell decisions. Auto-snapshots all portfolios after.
 4. **Commentary** (`ai_commentary.py`) — each AI writes a daily blog post explaining their decisions
+
+All Gemma preprocessing has graceful fallback — if Ollama is unavailable, traders get raw data.
 
 ### AI Personalities
 - **Vanilla** — balanced portfolio manager
@@ -41,7 +57,8 @@ Each personality runs on 4 Mistral models (Mistral Small, Mistral Medium, Mistra
 | `ai_commentary.py` | Daily blog posts per trader |
 | `analytics.py` | Sortino ratio, module attribution, reflection trends, trade reasoning |
 | `backtest.py` | Benchmark comparison, regime analysis, period comparison |
-| `portfolio_optimizer.py` | Position sizing suggestions |
+| `portfolio_optimizer.py` | Correlation analysis, target allocation, confidence-weighted position sizing |
+| `gemma_preprocess.py` | Local Gemma preprocessors (headlines, analyst, insider, movers) |
 | `snapshots.py` | Daily portfolio value snapshots |
 
 ### Data Sources (Free Tier)
@@ -70,8 +87,16 @@ Peer comparison prompts in `_format_peer_comparison()` are hardened to prevent A
 
 ### GCP Cloud Scheduler (Daily Automation)
 Two scheduled jobs (timezone: America/New_York):
-1. **papertrade-pipeline** — 5:00 PM daily → `POST /api/ai/pipeline/trigger?session=close` (brief → reflections → trading → commentary)
-2. **papertrade-snapshots** — 5:30 PM daily → `POST /api/portfolio/snapshots/trigger` (safety net for human portfolios)
+1. **papertrade-pipeline-phase1** — 5:00 PM daily → `POST /api/ai/pipeline/trigger?steps=brief,reflections`
+2. **papertrade-pipeline-phase3** — 5:10 PM daily → `POST /api/ai/pipeline/trigger?steps=trading,commentary`
+3. **papertrade-snapshots** — 5:30 PM daily → `POST /api/portfolio/snapshots/trigger` (safety net for human portfolios)
+
+### Local launchd Job (Gemma Preprocessing)
+- **Plist:** `~/Library/LaunchAgents/com.papertrade.preprocess.plist`
+- **Script:** `backend/scripts/local_preprocess.py`
+- **Schedule:** 5:05 PM ET daily (between Phase 1 and Phase 3)
+- **Requires:** Ollama running locally with `gemma4:e2b` model pulled
+- **Config:** `OLLAMA_BASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` in `.env`
 
 ### GCP Secret Manager
 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`

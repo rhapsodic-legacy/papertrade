@@ -45,6 +45,7 @@ PERSONALITIES = {
             {"module": "optimizer", "weight": 6},
             {"module": "sentiment", "weight": 5},
             {"module": "signal_ranker", "weight": 4},
+            {"module": "expert_opinion", "weight": 5},
             {"module": "trade_context", "weight": 3},
             {"module": "options_flow", "weight": 2},
             {"module": "yield_curve", "weight": 2},
@@ -78,6 +79,7 @@ PERSONALITIES = {
             {"module": "macro", "weight": 9},
             {"module": "optimizer", "weight": 8},
             {"module": "technicals", "weight": 7},
+            {"module": "expert_opinion", "weight": 6},
             {"module": "yield_curve", "weight": 5},
             {"module": "options_flow", "weight": 4},
             {"module": "signal_ranker", "weight": 3},
@@ -114,6 +116,7 @@ PERSONALITIES = {
             {"module": "sentiment", "weight": 7},
             {"module": "optimizer", "weight": 5},
             {"module": "signal_ranker", "weight": 4},
+            {"module": "expert_opinion", "weight": 3},
             {"module": "trade_context", "weight": 3},
         ],
     },
@@ -143,6 +146,7 @@ PERSONALITIES = {
         "toolkit": [
             {"module": "sentiment", "weight": 9, "invert": True},
             {"module": "fundamentals", "weight": 8},
+            {"module": "expert_opinion", "weight": 7, "invert": True},
             {"module": "patterns", "weight": 7},
             {"module": "macro", "weight": 6},
             {"module": "options_flow", "weight": 5},
@@ -179,6 +183,7 @@ PERSONALITIES = {
             {"module": "technicals", "weight": 9},
             {"module": "patterns", "weight": 8},
             {"module": "sentiment", "weight": 6},
+            {"module": "expert_opinion", "weight": 6},
             {"module": "optimizer", "weight": 5},
             {"module": "yield_curve", "weight": 4},
             {"module": "signal_ranker", "weight": 3},
@@ -347,9 +352,24 @@ actively trimming, rotating, and rebalancing — not just accumulating.
 - Maximum 8 trades per day (enough to rebalance: sell overweight positions + buy new ones).
 - If you have no positions yet, build an initial portfolio of 4-6 assets matching your strategy.
 
+## Conditional Orders (Optional)
+You may also place conditional orders that execute automatically when price conditions are met. \
+These run between daily sessions — a subagent monitors prices every 5 minutes and executes when triggered. \
+Order types:
+- **limit_buy**: Buy when price drops to or below trigger_price (buy the dip)
+- **stop_loss**: Sell when price drops to or below trigger_price (cut losses)
+- **take_profit**: Sell when price rises to or above trigger_price (lock gains)
+- **trailing_stop**: Sell when price drops trail_pct% from its high-water mark (dynamic stop-loss)
+
+Conditional orders expire after 5 days. Use them strategically — not every day needs conditional orders. \
+Good use cases: protecting a new position with a stop-loss, setting a limit buy at support, \
+or trailing a winner. Maximum 3 conditional orders per day.
+
 Respond ONLY with valid JSON in this exact format, no other text:
-{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation).", "modules_used": ["technicals", "fundamentals"]}]}
+{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation). If a news cluster drove this decision, name it.", "modules_used": ["technicals", "fundamentals"], "cluster_ref": "Tech Earnings Beat"}], "conditional_orders": [{"symbol": "AAPL", "asset_type": "stock", "order_type": "stop_loss", "side": "sell", "quantity": 10, "trigger_price": 165.00, "reasoning": "Protect new position"}, {"symbol": "ETH", "asset_type": "crypto", "order_type": "trailing_stop", "side": "sell", "quantity": 0.5, "trail_pct": 8.0, "reasoning": "Ride momentum with 8% trail"}]}
 "modules_used" lists which of your Data Toolkit modules informed this trade decision. Use the module names from your toolkit manifest.
+"cluster_ref" (optional) — if a headline cluster from Market News influenced this trade, put the EXACT theme name from the clusters listed above. Do NOT invent cluster names. If no cluster is relevant, omit this field entirely. Only use theme names that appear verbatim in your Market News (clustered) section.
+"conditional_orders" is optional — omit the field entirely if you have no conditional orders this session.
 """
 
 # Session-specific instructions appended to the system prompt
@@ -844,6 +864,109 @@ def _compute_dynamic_risk(db, user_id: str) -> dict | None:
         "size_multiplier": round(multiplier, 2),
         "equity_trend": trend,
         "recent_5d_return": round(recent_5d, 1),
+    }
+
+
+def _compute_discipline_score(
+    db, user_id: str, personality_key: str, portfolio: dict,
+) -> dict | None:
+    """Score how well this trader follows their own risk rules.
+
+    Checks: stop-loss adherence, position sizing, hold time limits,
+    diversification, and sell discipline. Returns a dict with scores
+    and specific violations to include in the prompt.
+    """
+    if personality_key == "custom" or personality_key not in PERSONALITIES:
+        return None
+
+    risk_params = PERSONALITIES[personality_key].get("risk_params", {})
+    positions = portfolio.get("positions", [])
+    cash = portfolio.get("cash", 0)
+    total_value = cash + sum(p.get("market_value", 0) for p in positions)
+
+    if total_value <= 0 or not positions:
+        return None
+
+    stop_loss = risk_params.get("stop_loss_pct", -10)
+    take_profit = risk_params.get("take_profit_pct", 20)
+    max_pos_pct = risk_params.get("max_position_pct", 15)
+    max_hold = risk_params.get("max_hold_days", 30)
+
+    violations = []
+    scores = {
+        "stop_loss": 100,
+        "position_sizing": 100,
+        "hold_discipline": 100,
+        "diversification": 100,
+    }
+
+    # Check stop-loss violations (positions past stop-loss still held)
+    stop_loss_breaches = 0
+    for p in positions:
+        pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100 if p["avg_cost"] > 0 else 0
+        if pnl_pct <= stop_loss:
+            stop_loss_breaches += 1
+            violations.append(
+                f"STOP-LOSS IGNORED: {p['symbol']} is at {pnl_pct:+.1f}% "
+                f"(stop-loss is {stop_loss}%). You should have sold this already."
+            )
+    if stop_loss_breaches:
+        scores["stop_loss"] = max(0, 100 - stop_loss_breaches * 30)
+
+    # Check position sizing violations
+    overweight = 0
+    for p in positions:
+        pct = p.get("market_value", 0) / total_value * 100
+        if pct > max_pos_pct * 1.1:  # 10% grace
+            overweight += 1
+            violations.append(
+                f"OVERWEIGHT: {p['symbol']} is {pct:.1f}% of portfolio "
+                f"(limit is {max_pos_pct}%). Trim this position."
+            )
+    if overweight:
+        scores["position_sizing"] = max(0, 100 - overweight * 25)
+
+    # Check hold discipline
+    stale = 0
+    for p in positions:
+        hold_days = p.get("hold_days", 0)
+        pnl_pct = ((p["current_price"] / p["avg_cost"]) - 1) * 100 if p["avg_cost"] > 0 else 0
+        if hold_days > max_hold and abs(pnl_pct) < 5:
+            stale += 1
+            violations.append(
+                f"STALE POSITION: {p['symbol']} held {hold_days}d "
+                f"(limit {max_hold}d) with only {pnl_pct:+.1f}% return. "
+                f"Free up this capital."
+            )
+    if stale:
+        scores["hold_discipline"] = max(0, 100 - stale * 20)
+
+    # Check diversification (sector concentration)
+    sector_pcts: dict[str, float] = {}
+    for p in positions:
+        sector = STOCK_SECTORS.get(p["symbol"], "Crypto" if p.get("asset_type") == "crypto" else "Other")
+        sector_pcts[sector] = sector_pcts.get(sector, 0) + (p.get("market_value", 0) / total_value * 100)
+    for sector, pct in sector_pcts.items():
+        if pct > 50:
+            scores["diversification"] = max(0, 100 - int((pct - 40) * 2))
+            violations.append(
+                f"CONCENTRATED: {sector} is {pct:.0f}% of portfolio. Diversify."
+            )
+
+    overall = sum(scores.values()) / len(scores)
+    grade = (
+        "A" if overall >= 90 else
+        "B" if overall >= 75 else
+        "C" if overall >= 60 else
+        "D" if overall >= 40 else
+        "F"
+    )
+
+    return {
+        "overall_score": round(overall),
+        "grade": grade,
+        "scores": scores,
+        "violations": violations,
     }
 
 
@@ -1416,9 +1539,47 @@ def _compute_portfolio_risk(portfolio: dict, personality_key: str = None, brief:
     lines = []
     sell_alerts = []
 
-    # Cash allocation
+    # Cash allocation + deployment pressure
     cash_pct = round(cash / total_value * 100, 1)
     lines.append(f"Cash allocation: {cash_pct}% (${cash:,.2f})")
+
+    # Personality-specific cash targets — nudge overweight-cash traders to deploy
+    cash_targets = {
+        "vanilla": (10, 20),
+        "steady_eddie": (15, 25),
+        "yolo_bot": (0, 10),
+        "contrarian_carl": (15, 25),
+        "crypto_chad": (5, 20),
+    }
+    if personality_key and personality_key in cash_targets:
+        target_min, target_max = cash_targets[personality_key]
+        if cash_pct > target_max + 15:
+            deploy_amount = cash - (total_value * target_max / 100)
+            sell_alerts.append(
+                f"💰 DEPLOY CAPITAL: You have {cash_pct:.0f}% cash — your strategy targets "
+                f"{target_min}-{target_max}%. You have ${deploy_amount:,.0f} excess cash sitting idle. "
+                f"This is paper trading with zero risk. Find opportunities matching your criteria "
+                f"and SIZE UP your positions. Small $1-2k buys won't move the needle — "
+                f"allocate 5-10% of portfolio per high-conviction trade."
+            )
+        elif cash_pct > target_max:
+            lines.append(
+                f"  ⚠ Above target cash ({target_min}-{target_max}%). "
+                f"Look for opportunities to deploy ${cash - total_value * target_max / 100:,.0f}."
+            )
+
+    # Crypto-specific allocation pressure for Crypto Chad
+    if personality_key == "crypto_chad":
+        crypto_val = sum(p["market_value"] for p in positions if p.get("asset_type") == "crypto")
+        crypto_pct = round(crypto_val / total_value * 100, 1) if total_value > 0 else 0
+        if crypto_pct < 40:
+            target_crypto_val = total_value * 0.6
+            deficit = target_crypto_val - crypto_val
+            sell_alerts.append(
+                f"🪙 CRYPTO UNDERWEIGHT: You're at {crypto_pct:.0f}% crypto — your identity is "
+                f"60-80% crypto. You need ~${deficit:,.0f} more in crypto (BTC, ETH, SOL, AVAX). "
+                f"Buy aggressively — BTC and ETH are your core positions, each should be 15-20% of portfolio."
+            )
 
     # Position concentration + risk alerts
     position_pcts = []
@@ -1655,12 +1816,16 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
         trades = parsed.get("trades", [])
         if not isinstance(trades, list):
             logger.warning("AI response 'trades' field is not a list: %s", type(trades))
-            return []
-        return trades[:8]  # Max 8 trades (allows rebalancing)
+            return [], []
+        # Extract conditional orders (optional field)
+        cond_orders = parsed.get("conditional_orders", [])
+        if not isinstance(cond_orders, list):
+            cond_orders = []
+        return trades[:8], cond_orders[:3]  # Max 8 trades, 3 conditional orders
     except json.JSONDecodeError as e:
         logger.error("JSON parse failed for AI response: %s — raw (first 500 chars): %s", e, raw[:500])
         print(f"[PIPELINE ERROR] JSON parse failed: {e} — raw: {raw[:300]}")
-        return []
+        return [], []
 
 
 # ---------------------------------------------------------------------------
@@ -1673,11 +1838,13 @@ async def _execute_ai_trade(
     active_modules: set[str] | None = None,
     brief: dict | None = None,
     risk_params: dict | None = None,
+    optimizer_sizing: dict | None = None,
 ) -> dict | None:
     """Execute a single trade for an AI trader. Returns result or None on failure.
 
     ATR-based position cap: For buys, limits dollar exposure so that a 2×ATR
     adverse move loses at most ``risk_per_trade_pct`` of portfolio value.
+    Optimizer sizing: Additionally caps buys to the optimizer's suggested dollar amount.
     """
     from app.services.rag_toolkit import RAG_MODULES, detect_modules_from_text
 
@@ -1742,6 +1909,26 @@ async def _execute_ai_trade(
                         f"max${max_dollars:,.0f}, risk_budget={risk_per_trade*100:.1f}%)"
                     )
 
+    # --- Optimizer-based position sizing cap (buys only) ---
+    if side == "buy" and optimizer_sizing and price > 0:
+        opt = optimizer_sizing.get(symbol)
+        if opt:
+            opt_dollars = opt.get("dollar_amount", 0)
+            if opt_dollars > 0:
+                if asset_type == "stock":
+                    opt_qty = int(opt_dollars / price)
+                else:
+                    opt_qty = round(opt_dollars / price, 8)
+                if opt_qty > 0 and quantity > opt_qty:
+                    original_qty = quantity
+                    quantity = opt_qty
+                    trade["quantity"] = quantity
+                    print(
+                        f"[OPT_SIZE] {symbol}: capped {original_qty} → {quantity} "
+                        f"(optimizer suggested ${opt_dollars:,.0f}, "
+                        f"{opt.get('suggested_pct', 0)}% of portfolio)"
+                    )
+
     if asset_type == "stock":
         quantity = int(quantity)  # ensure whole shares after cap
 
@@ -1799,6 +1986,15 @@ async def _execute_ai_trade(
             "total": total,
         }
         if reasoning:
+            # Validate cluster reference against actual brief themes
+            cluster_ref = trade.get("cluster_ref", "")
+            if cluster_ref and isinstance(cluster_ref, str) and brief:
+                valid_themes = {
+                    c["theme"] for c in (brief.get("headline_clusters") or [])
+                }
+                if cluster_ref in valid_themes:
+                    reasoning = f"{reasoning} [Cluster: {cluster_ref}]"
+                # else: silently drop — the LLM hallucinated a cluster name
             tx_data["reasoning"] = reasoning[:500]  # Cap at 500 chars
 
         # Determine which toolkit modules informed this trade
@@ -1972,6 +2168,49 @@ async def _run_trader(
         except Exception:
             pass
 
+        # Inject conditional order context (pending + recently resolved)
+        try:
+            from app.services.conditional_orders import get_pending_orders, get_recent_triggered_orders
+            pending_conds = get_pending_orders(user_id)
+            if pending_conds:
+                lines = ["\n\n## Your Pending Conditional Orders"]
+                for co in pending_conds:
+                    if co["order_type"] == "trailing_stop":
+                        lines.append(
+                            f"  {co['order_type'].upper()} {co['side']} {co['quantity']} {co['symbol']} "
+                            f"(trail {co['trail_pct']}%, HWM: ${float(co['high_water_mark'] or 0):.2f}) — {co['reasoning']}"
+                        )
+                    else:
+                        lines.append(
+                            f"  {co['order_type'].upper()} {co['side']} {co['quantity']} {co['symbol']} "
+                            f"@ ${float(co['trigger_price']):.2f} — {co['reasoning']}"
+                        )
+                lines.append("These are still live. Don't duplicate them with new orders on the same symbol.")
+                trade_memory += "\n".join(lines)
+
+            recent_conds = get_recent_triggered_orders(user_id, limit=5)
+            if recent_conds:
+                lines = ["\n\n## Recently Resolved Conditional Orders"]
+                for co in recent_conds:
+                    status = co["status"].upper()
+                    if co["status"] == "executed":
+                        lines.append(
+                            f"  {status}: {co['order_type'].upper()} {co['side']} {co['symbol']} "
+                            f"@ ${float(co['execution_price']):.2f} — {co['reasoning']}"
+                        )
+                    elif co["status"] == "expired":
+                        lines.append(
+                            f"  {status}: {co['order_type'].upper()} {co['symbol']} never triggered — "
+                            f"was your target realistic?"
+                        )
+                    else:
+                        lines.append(
+                            f"  {status}: {co['order_type'].upper()} {co['symbol']} — {co['reasoning']}"
+                        )
+                trade_memory += "\n".join(lines)
+        except Exception:
+            pass
+
         # --- Agentic Pipeline Steps 3 & 4 (conditional on toolkit) ---
         personality = custom_personality if personality_key == "custom" else PERSONALITIES[personality_key]
         model_cfg = CUSTOM_TRADER_MODEL if model_key == "custom" else MODELS[model_key]
@@ -2062,6 +2301,13 @@ async def _run_trader(
             except Exception:
                 pass
 
+        # Trade discipline scoring (always computed if positions exist)
+        discipline = None
+        try:
+            discipline = _compute_discipline_score(db, user_id, personality_key, portfolio)
+        except Exception:
+            pass
+
         # Ask AI for trades (with modular toolkit prompt)
         agentic_data = {
             "pattern_results": pattern_results,
@@ -2072,16 +2318,18 @@ async def _run_trader(
             "performance_intel": perf_intel_text,
             "trade_context": trade_context,
             "dynamic_risk": dynamic_risk,
+            "discipline": discipline,
         }
-        trades = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
+        trades, cond_orders = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 
-        # Execute trades (with ATR-based position cap)
+        # Execute trades (with ATR-based position cap + optimizer sizing)
         trade_risk_params = _jittered_risk_params(personality.get("risk_params", {}), model_key)
         executed = []
         for trade in trades:
             result = await _execute_ai_trade(
                 user_id, trade, active_modules=toolkit_modules,
                 brief=brief, risk_params=trade_risk_params,
+                optimizer_sizing=sizing,
             )
             if result:
                 entry = {
@@ -2093,7 +2341,18 @@ async def _run_trader(
                     entry["reasoning"] = trade["reasoning"]
                 executed.append(entry)
 
-        print(f"[PIPELINE OK] {display_name}: {len(trades)} proposed, {len(executed)} executed")
+        # Save conditional orders (if any)
+        saved_conds = []
+        if cond_orders:
+            try:
+                from app.services.conditional_orders import save_conditional_orders
+                saved_conds = save_conditional_orders(user_id, cond_orders)
+                if saved_conds:
+                    print(f"[PIPELINE] {display_name}: saved {len(saved_conds)} conditional orders")
+            except Exception as e:
+                print(f"[PIPELINE] {display_name}: conditional order save failed: {e}")
+
+        print(f"[PIPELINE OK] {display_name}: {len(trades)} proposed, {len(executed)} executed, {len(saved_conds)} conditional")
         _record_pipeline_timing(
             db, phase="trading", user_id=user_id, display_name=display_name,
             model_key=model_key, personality_key=personality_key,
@@ -2105,6 +2364,7 @@ async def _run_trader(
             "status": "ok",
             "trades_proposed": len(trades),
             "trades_executed": len(executed),
+            "conditional_orders_saved": len(saved_conds),
             "trades": executed,
         }
 

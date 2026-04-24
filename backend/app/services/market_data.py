@@ -327,6 +327,33 @@ async def get_quote(symbol: str, asset_type: str) -> dict | None:
     return None
 
 
+async def get_batch_quotes(symbols: list[tuple[str, str]]) -> dict[tuple[str, str], float]:
+    """Fetch prices for a list of (symbol, asset_type) pairs. Returns {(symbol, asset_type): price}.
+
+    Leverages per-symbol caching. Crypto quotes use the batch CoinGecko endpoint
+    when multiple crypto symbols are requested.
+    """
+    results = {}
+
+    # Separate crypto symbols to use batch endpoint
+    crypto_syms = [s for s, at in symbols if at == "crypto"]
+    if len(crypto_syms) > 1:
+        all_crypto = await get_all_crypto_quotes()
+        for sym in crypto_syms:
+            if sym in all_crypto:
+                results[(sym, "crypto")] = all_crypto[sym]["price"]
+
+    # Fetch remaining individually (stocks + any missed crypto)
+    for symbol, asset_type in symbols:
+        if (symbol, asset_type) in results:
+            continue
+        quote = await get_quote(symbol, asset_type)
+        if quote:
+            results[(symbol, asset_type)] = quote["price"]
+
+    return results
+
+
 async def get_stock_candles(symbol: str, days: int = 30) -> list[dict]:
     """Fetch historical daily candles. Tries Finnhub first, falls back to Yahoo Finance."""
     cache_key = f"stock_candle:{symbol.upper()}:{days}"

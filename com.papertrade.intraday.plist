@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.papertrade.intraday</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jessepassmore/Desktop/Programming_Pizazz/fintech_support/backend/venv/bin/python3</string>
+        <string>/Users/jessepassmore/Desktop/Programming_Pizazz/fintech_support/backend/scripts/intraday_subagent.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jessepassmore/Desktop/Programming_Pizazz/fintech_support/backend</string>
+    <!-- Run every 5 minutes (300 seconds) -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/papertrade_intraday.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/papertrade_intraday.log</string>
+    <!-- Don't retry immediately on failure -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

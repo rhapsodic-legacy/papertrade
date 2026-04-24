@@ -278,11 +278,11 @@ def compute_position_sizes(
     result = {}
     for sym, sig in signal_scores.items():
         score = sig.get("score", 0)
-        if score < 20:
+        if score < 10:
             continue
 
-        # Scale by signal strength (20-100 range mapped to 0.2-1.0)
-        signal_factor = min(score, 100) / 100
+        # Scale by signal strength (10-100 range mapped to 0.1-1.0)
+        signal_factor = max(min(score, 100), 10) / 100
 
         # Scale by inverse volatility (high vol = smaller size)
         sym_vol = volatility.get(sym, median_vol) or median_vol
