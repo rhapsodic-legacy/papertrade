@@ -1147,11 +1147,56 @@ def _format_trade_context(ctx: dict) -> str:
     win_rate = trade_stats.get("win_rate", 0)
     avg_win = trade_stats.get("avg_win_pct", 0)
     avg_loss = trade_stats.get("avg_loss_pct", 0)
+
+    # Pre-computed KEY PATTERN line so the model doesn't have to synthesize from raw stats.
+    # This line cites the strongest + weakest sector and flags any losing streak — these
+    # are the takeaways most likely to change today's decision.
+    by_sector = trade_stats.get("by_sector", {})
+    sector_ranked = [
+        (s, v) for s, v in sorted(by_sector.items(), key=lambda x: x[1]["avg_pnl"], reverse=True)
+        if v["count"] >= 2
+    ]
+    by_type = trade_stats.get("by_asset_type", {})
+    streak = trade_stats.get("streak", {})
+
+    takeaway_parts = []
+    if sector_ranked:
+        best_s, best_v = sector_ranked[0]
+        takeaway_parts.append(
+            f"strongest sector is {best_s} ({best_v['win_rate']:.0f}% WR over {best_v['count']} trades — size up here)"
+        )
+        if len(sector_ranked) >= 2:
+            worst_s, worst_v = sector_ranked[-1]
+            if worst_v["avg_pnl"] < best_v["avg_pnl"] - 5:
+                takeaway_parts.append(
+                    f"weakest is {worst_s} ({worst_v['win_rate']:.0f}% WR over {worst_v['count']} — trim or skip)"
+                )
+    if len(by_type) > 1:
+        stocks_pnl = by_type.get("stock", {}).get("avg_pnl", 0)
+        crypto_pnl = by_type.get("crypto", {}).get("avg_pnl", 0)
+        if abs(stocks_pnl - crypto_pnl) > 5:
+            winner = ("stocks", stocks_pnl) if stocks_pnl > crypto_pnl else ("crypto", crypto_pnl)
+            loser = ("crypto", crypto_pnl) if stocks_pnl > crypto_pnl else ("stocks", stocks_pnl)
+            takeaway_parts.append(
+                f"you outperform in {winner[0]} (avg {winner[1]:+.1f}%) vs {loser[0]} ({loser[1]:+.1f}%)"
+            )
+    if streak.get("direction") == "losing" and streak.get("length", 0) >= 3:
+        takeaway_parts.append(
+            f"you're on a {streak['length']}-trade losing streak — reduce size until confidence returns"
+        )
+    elif streak.get("direction") == "winning" and streak.get("length", 0) >= 4:
+        takeaway_parts.append(
+            f"you're on a {streak['length']}-trade winning streak — stay disciplined, don't let confidence become overconfidence"
+        )
+
+    if takeaway_parts:
+        lines.append(f"  KEY PATTERN: {'; '.join(takeaway_parts)}.")
+        lines.append("")
+
     lines.append(f"  Overall: {total_sells} round-trips, {win_rate:.0f}% win rate")
     lines.append(f"  Avg winner: +{avg_win:.1f}% | Avg loser: {avg_loss:.1f}%")
 
     # By asset type
-    by_type = trade_stats.get("by_asset_type", {})
     if len(by_type) > 1:
         lines.append("")
         lines.append("  By asset type:")
@@ -1169,13 +1214,11 @@ def _format_trade_context(ctx: dict) -> str:
             lines.append(f"    {period}: {stats['count']} trades, {stats['win_rate']:.0f}% win rate, avg P&L {stats['avg_pnl']:+.1f}%")
 
     # By sector (stocks only)
-    by_sector = trade_stats.get("by_sector", {})
-    if by_sector:
+    if sector_ranked:
         lines.append("")
         lines.append("  By sector (strongest → weakest):")
-        for sector, stats in sorted(by_sector.items(), key=lambda x: x[1]["avg_pnl"], reverse=True):
-            if stats["count"] >= 2:
-                lines.append(f"    {sector}: {stats['count']} trades, {stats['win_rate']:.0f}% win, avg {stats['avg_pnl']:+.1f}%")
+        for sector, stats in sector_ranked:
+            lines.append(f"    {sector}: {stats['count']} trades, {stats['win_rate']:.0f}% win, avg {stats['avg_pnl']:+.1f}%")
 
     # Recent streak
     streak = trade_stats.get("streak", {})
@@ -1354,7 +1397,9 @@ def _format_yield_curve(brief: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _format_expert_opinion(brief: dict, invert: bool = False) -> str:
-    """Format the expert opinion digest from analyst blog scraping pipeline."""
+    """Format the expert opinion digest from analyst blog scraping pipeline.
+    Surfaces the TICKER CALLS section at the top so traders can quote specific
+    calls. Falls back gracefully if the digest isn't structured."""
     digest = brief.get("expert_opinion_digest")
     if not digest:
         return ""
@@ -1363,9 +1408,9 @@ def _format_expert_opinion(brief: dict, invert: bool = False) -> str:
 
     lines = [
         f"### Expert Opinion Digest{header_suffix}",
-        "These are opinions from external independent analysts (Wolf Street, Calculated Risk,",
-        "Bankless, Messari, The Diff, and others). They may be wrong, biased, or outdated.",
-        "Treat as ONE perspective among many. Cross-reference against your raw data before acting.",
+        "Opinions from external independent analysts (Wolf Street, Mish Talk, Calculated Risk,",
+        "and others). They may be wrong, biased, or outdated. Treat as ONE perspective among",
+        "many. CITE THE SOURCE if you use one of these calls in your reasoning.",
     ]
 
     if invert:
@@ -1373,6 +1418,22 @@ def _format_expert_opinion(brief: dict, invert: bool = False) -> str:
             "CONTRARIAN LENS: Where these analysts see consensus, you see a crowded trade. "
             "Where they see risk, you see opportunity. Their conviction is your contrarian signal."
         )
+
+    # Try to extract the TICKER CALLS section and surface it as a quotable callout.
+    import re
+    ticker_section = ""
+    if isinstance(digest, str):
+        m = re.search(r"TICKER CALLS:\s*\n(.+?)(?=\n[A-Z][A-Z ]+:|\Z)", digest, re.DOTALL)
+        if m:
+            ticker_section = m.group(1).strip()
+
+    if ticker_section and "no ticker" not in ticker_section.lower():
+        lines.append("")
+        lines.append("QUOTABLE TICKER CALLS (cite these directly when relevant):")
+        for line in ticker_section.splitlines():
+            line = line.strip()
+            if line:
+                lines.append(f"  {line}")
 
     lines.append("")
     lines.append(digest)

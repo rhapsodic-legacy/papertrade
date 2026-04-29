@@ -462,14 +462,23 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
     prompt = (
         f"Here are {len(summaries)} analyst opinions from the past 72 hours:\n\n"
         + "\n\n".join(lines)
-        + "\n\nWrite a ~500-word Expert Opinion Digest that:\n"
-        "1. Groups opinions by theme (macro, sector, specific assets)\n"
-        "2. Identifies where analysts AGREE (consensus signals)\n"
-        "3. Highlights where analysts DISAGREE (conflicting views)\n"
-        "4. Calls out any high-conviction calls (confidence >= 0.7)\n"
-        "5. Notes which sources/analysts are behind each view\n\n"
-        "Be specific — name tickers, cite the analyst source, and quantify sentiment. "
-        "This digest will be read by AI traders who need actionable intelligence."
+        + "\n\nProduce a digest in EXACTLY this structure:\n\n"
+        "TICKER CALLS:\n"
+        "For each ticker mentioned in the summaries above, write ONE line in this format:\n"
+        "  TICKER — DIRECTION (source1, source2): one-sentence rationale, confidence X.X\n"
+        "DIRECTION must be BUY / SELL / HOLD / WATCH / NEUTRAL / CAUTION.\n"
+        "If analysts disagree, list both: 'AAPL — BUY (wolfstreet) / SELL (mishtalk): split view, confidence 0.5'\n"
+        "If NO tickers appear in any summary, write exactly: 'No ticker-specific calls in this digest.'\n\n"
+        "THEMES:\n"
+        "2-3 short paragraphs covering macro/sector themes that didn't fit ticker calls. "
+        "Cite analysts inline (e.g. 'Wolf Street argues...'). Be specific.\n\n"
+        "CONFLICTS:\n"
+        "Where do analysts disagree? 1-3 bullet points.\n\n"
+        "HIGH-CONVICTION CALLS (confidence >= 0.7):\n"
+        "List the highest-confidence calls regardless of whether they're ticker-specific.\n\n"
+        "Be specific — name tickers verbatim, cite sources, quantify sentiment. "
+        "Avoid generic advice. This digest will be read by AI traders making BUY/SELL "
+        "decisions today and they need to be able to QUOTE specific calls in their reasoning."
     )
 
     try:

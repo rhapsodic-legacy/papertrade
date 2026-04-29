@@ -45,8 +45,8 @@ PERSONALITIES = {
             {"module": "optimizer", "weight": 6},
             {"module": "sentiment", "weight": 5},
             {"module": "signal_ranker", "weight": 4},
-            {"module": "expert_opinion", "weight": 5},
-            {"module": "trade_context", "weight": 3},
+            {"module": "expert_opinion", "weight": 8},
+            {"module": "trade_context", "weight": 7},
             {"module": "options_flow", "weight": 2},
             {"module": "yield_curve", "weight": 2},
             {"module": "dynamic_risk", "weight": 1},
@@ -79,11 +79,11 @@ PERSONALITIES = {
             {"module": "macro", "weight": 9},
             {"module": "optimizer", "weight": 8},
             {"module": "technicals", "weight": 7},
-            {"module": "expert_opinion", "weight": 6},
+            {"module": "expert_opinion", "weight": 8},
             {"module": "yield_curve", "weight": 5},
             {"module": "options_flow", "weight": 4},
             {"module": "signal_ranker", "weight": 3},
-            {"module": "trade_context", "weight": 2},
+            {"module": "trade_context", "weight": 7},
             {"module": "dynamic_risk", "weight": 1},
         ],
     },
@@ -116,8 +116,8 @@ PERSONALITIES = {
             {"module": "sentiment", "weight": 7},
             {"module": "optimizer", "weight": 5},
             {"module": "signal_ranker", "weight": 4},
-            {"module": "expert_opinion", "weight": 3},
-            {"module": "trade_context", "weight": 3},
+            {"module": "expert_opinion", "weight": 7},
+            {"module": "trade_context", "weight": 7},
         ],
     },
     "contrarian_carl": {
@@ -146,12 +146,12 @@ PERSONALITIES = {
         "toolkit": [
             {"module": "sentiment", "weight": 9, "invert": True},
             {"module": "fundamentals", "weight": 8},
-            {"module": "expert_opinion", "weight": 7, "invert": True},
+            {"module": "expert_opinion", "weight": 9, "invert": True},
             {"module": "patterns", "weight": 7},
             {"module": "macro", "weight": 6},
             {"module": "options_flow", "weight": 5},
             {"module": "optimizer", "weight": 4},
-            {"module": "trade_context", "weight": 3},
+            {"module": "trade_context", "weight": 7},
             {"module": "yield_curve", "weight": 2},
             {"module": "dynamic_risk", "weight": 1},
         ],
@@ -161,6 +161,12 @@ PERSONALITIES = {
         "prompt": (
             "You are a crypto-native trader called Crypto Chad, inspired by "
             "on-chain analysts and narrative cycle trading. "
+            "PRE-BUY DISCIPLINE (apply BEFORE every BUY decision): "
+            "(1) If this asset is already >15% of your portfolio, DO NOT add more — rotate or hold. "
+            "(2) If your existing position is down >5% from your entry without a thesis change, "
+            "DO NOT average down. Averaging down on losers without new information is how losses compound. "
+            "(3) If you've already issued 3+ buys this session with 0 sells, you're accumulating "
+            "without rotating — actively look for trim candidates before any new buy. "
             "ALLOCATION: 60-80% crypto, 10-20% tech stocks (correlated growth), 10-20% cash. "
             "BUY criteria: coins with market_cap_rank <20 (established), distance from ATH >30% "
             "(upside potential), 7d momentum positive, and Bitcoin RSI >40 (not in death spiral). "
@@ -183,11 +189,11 @@ PERSONALITIES = {
             {"module": "technicals", "weight": 9},
             {"module": "patterns", "weight": 8},
             {"module": "sentiment", "weight": 6},
-            {"module": "expert_opinion", "weight": 6},
+            {"module": "expert_opinion", "weight": 8},
             {"module": "optimizer", "weight": 5},
             {"module": "yield_curve", "weight": 4},
             {"module": "signal_ranker", "weight": 3},
-            {"module": "trade_context", "weight": 2},
+            {"module": "trade_context", "weight": 7},
         ],
     },
 }
