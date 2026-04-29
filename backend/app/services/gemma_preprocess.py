@@ -413,10 +413,33 @@ async def summarize_analyst_article(article: dict) -> dict | None:
             "analyst_call": result.get("analyst_call", ""),
             "confidence": max(0.0, min(1.0, float(result.get("confidence", 0.5)))),
         }
-        # Ensure tickers is a list of strings
-        if isinstance(summary_data["tickers"], str):
-            summary_data["tickers"] = [summary_data["tickers"]]
-        summary_data["tickers"] = [str(t).upper() for t in summary_data["tickers"] if t]
+        # Normalize tickers — Gemma sometimes returns the field as a stringified
+        # list ("['BTC', 'ETH']") instead of an actual list. Unwrap if needed.
+        raw_tickers = summary_data["tickers"]
+        if isinstance(raw_tickers, str):
+            stripped = raw_tickers.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                try:
+                    import ast
+                    parsed = ast.literal_eval(stripped)
+                    if isinstance(parsed, list):
+                        raw_tickers = parsed
+                    else:
+                        raw_tickers = [stripped]
+                except (ValueError, SyntaxError):
+                    raw_tickers = [stripped]
+            else:
+                raw_tickers = [raw_tickers]
+        # Drop any items that are themselves stringified lists or empty
+        cleaned = []
+        for t in raw_tickers:
+            if not t:
+                continue
+            ts = str(t).strip().strip("'\"").upper()
+            if not ts or ts == "[]":
+                continue
+            cleaned.append(ts)
+        summary_data["tickers"] = cleaned
 
         return summary_data
     except Exception as e:
@@ -431,74 +454,224 @@ ANALYST_DIGEST_SYSTEM = (
 )
 
 
+def _normalize_tickers(raw) -> list[str]:
+    """Normalize a tickers field that may be: a list, a string, or a list
+    containing stringified lists (legacy data from before the parser fix).
+    Returns a clean list of upper-cased ticker strings."""
+    import ast
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                p = ast.literal_eval(s)
+                raw = p if isinstance(p, list) else [s]
+            except (ValueError, SyntaxError):
+                raw = [s]
+        else:
+            raw = [s]
+    out: list[str] = []
+    for t in raw:
+        if not t:
+            continue
+        # Handle legacy data where each item is itself a stringified list
+        if isinstance(t, str) and t.startswith("[") and t.endswith("]"):
+            try:
+                p = ast.literal_eval(t)
+                if isinstance(p, list):
+                    for inner in p:
+                        if inner:
+                            out.append(str(inner).strip().strip("'\"").upper())
+                    continue
+            except (ValueError, SyntaxError):
+                pass
+        ts = str(t).strip().strip("'\"").upper()
+        if ts and ts != "[]":
+            out.append(ts)
+    return out
+
+
+_DIRECTION_FROM_CALL = [
+    ("BEARISH", "BEARISH"),
+    ("SELL",    "SELL"),
+    ("CAUTION", "CAUTION"),
+    ("BULLISH", "BULLISH"),
+    ("BUY",     "BUY"),
+    ("HOLD",    "HOLD"),
+    ("WATCH",   "WATCH"),
+    ("NEUTRAL", "NEUTRAL"),
+]
+
+
+def _direction_from_call(call: str) -> str:
+    """Map an analyst_call sentence to one of the canonical directions."""
+    call_upper = (call or "").upper()
+    for needle, direction in _DIRECTION_FROM_CALL:
+        if needle in call_upper:
+            return direction
+    return "NEUTRAL"
+
+
 async def compress_analyst_digest(summaries: list[dict]) -> str | None:
-    """Compress multiple article summaries into a ~500-word Expert Opinion Digest.
+    """Build a structured Expert Opinion Digest from per-article summaries.
 
-    Groups by theme, flags consensus AND conflicts between analysts.
-    Returns the digest text, or None if Ollama unavailable.
+    Pure Python templating — no LLM call. Gemma's small model can't reliably
+    follow strict structural prompts at compression time, but the per-article
+    summaries already carry the structured fields we need (tickers, analyst_call,
+    confidence, sentiment). This function deterministically templates them into
+    the format the rag_toolkit formatter expects:
+
+        TICKER CALLS:
+          TICKER — DIRECTION (source1, source2): rationale, confidence X.X
+        THEMES:
+          paragraph per source category
+        CONFLICTS:
+          bullet points where analysts disagree
+        HIGH-CONVICTION CALLS (confidence >= 0.7):
+          one bullet per high-conviction call
+
+    Returns digest text, or None if no summaries.
     """
-    if not await is_ollama_available():
-        return None
-
     if not summaries:
         return None
 
-    # Build input from summaries
-    lines = []
-    for i, s in enumerate(summaries, 1):
-        source = s.get("source_key", "unknown")
-        call = s.get("analyst_call", "")
-        sent = s.get("sentiment", 0)
-        tickers = ", ".join(s.get("tickers", []))
-        summary = s.get("summary", "")
-        conf = s.get("confidence", 0.5)
-        lines.append(
-            f"{i}. [{source}] (sentiment: {sent:+.1f}, confidence: {conf:.1f})"
-            f"{f' [{tickers}]' if tickers else ''}\n"
-            f"   Call: {call}\n"
-            f"   Summary: {summary}"
-        )
+    from collections import defaultdict
 
-    prompt = (
-        f"Here are {len(summaries)} analyst opinions from the past 72 hours:\n\n"
-        + "\n\n".join(lines)
-        + "\n\nProduce a digest in EXACTLY this structure:\n\n"
-        "TICKER CALLS:\n"
-        "For each ticker mentioned in the summaries above, write ONE line in this format:\n"
-        "  TICKER — DIRECTION (source1, source2): one-sentence rationale, confidence X.X\n"
-        "DIRECTION must be BUY / SELL / HOLD / WATCH / NEUTRAL / CAUTION.\n"
-        "If analysts disagree, list both: 'AAPL — BUY (wolfstreet) / SELL (mishtalk): split view, confidence 0.5'\n"
-        "If NO tickers appear in any summary, write exactly: 'No ticker-specific calls in this digest.'\n\n"
-        "THEMES:\n"
-        "2-3 short paragraphs covering macro/sector themes that didn't fit ticker calls. "
-        "Cite analysts inline (e.g. 'Wolf Street argues...'). Be specific.\n\n"
-        "CONFLICTS:\n"
-        "Where do analysts disagree? 1-3 bullet points.\n\n"
-        "HIGH-CONVICTION CALLS (confidence >= 0.7):\n"
-        "List the highest-confidence calls regardless of whether they're ticker-specific.\n\n"
-        "Be specific — name tickers verbatim, cite sources, quantify sentiment. "
-        "Avoid generic advice. This digest will be read by AI traders making BUY/SELL "
-        "decisions today and they need to be able to QUOTE specific calls in their reasoning."
+    # ---- TICKER CALLS section ----
+    by_ticker: dict[str, list[dict]] = defaultdict(list)
+    ticker_less: list[dict] = []
+    for s in summaries:
+        tickers = _normalize_tickers(s.get("tickers"))
+        if tickers:
+            for t in tickers:
+                by_ticker[t].append(s)
+        else:
+            ticker_less.append(s)
+
+    # Score each ticker by max confidence across its calls; drop tickers whose
+    # top call is below 0.45 (filters out the price-roundup spam where every
+    # coin gets a low-confidence NEUTRAL/SELL tag).
+    ticker_rows: list[tuple[float, str]] = []
+    for ticker, calls in by_ticker.items():
+        max_conf = max(float(c.get("confidence", 0.5) or 0.5) for c in calls)
+        if max_conf < 0.45:
+            continue
+
+        dirs_by_source: dict[str, str] = {}
+        rationales: list[str] = []
+        confs: list[float] = []
+        for c in calls:
+            src = c.get("source_key", "unknown")
+            direction = _direction_from_call(c.get("analyst_call", ""))
+            dirs_by_source[src] = direction
+            ratl = (c.get("analyst_call") or "").strip()
+            if ratl:
+                rationales.append(ratl)
+            confs.append(float(c.get("confidence", 0.5) or 0.5))
+
+        unique_dirs = set(dirs_by_source.values())
+        if len(unique_dirs) == 1:
+            direction_str = next(iter(unique_dirs))
+            sources_str = ", ".join(sorted(dirs_by_source.keys()))
+            line = f"  {ticker} — {direction_str} ({sources_str}): {rationales[0][:200] if rationales else 'no rationale'}, confidence {max_conf:.2f}"
+        else:
+            direction_str = " / ".join(
+                f"{d} ({s})" for s, d in dirs_by_source.items()
+            )
+            line = f"  {ticker} — {direction_str}: {rationales[0][:200] if rationales else 'no rationale'}, confidence {max_conf:.2f}"
+        ticker_rows.append((max_conf, line))
+
+    # Sort by confidence descending; cap at 25 to keep the digest readable
+    ticker_rows.sort(key=lambda x: -x[0])
+    ticker_lines = [line for _, line in ticker_rows[:25]]
+
+    # ---- THEMES section (ticker-less summaries grouped by source category) ----
+    by_category: dict[str, list[dict]] = defaultdict(list)
+    for s in ticker_less:
+        cat = s.get("category", "macro")
+        by_category[cat].append(s)
+
+    theme_paragraphs: list[str] = []
+    for cat in ("macro", "tech_finance", "crypto"):
+        items = by_category.get(cat, [])
+        if not items:
+            continue
+        # 1-paragraph summary per category citing each analyst's call
+        bullet_calls = []
+        for s in items[:5]:  # cap at 5 per category to control digest size
+            src = s.get("source_key", "unknown")
+            call = (s.get("analyst_call") or "").strip()
+            if call:
+                bullet_calls.append(f"[{src}] {call}")
+        if bullet_calls:
+            theme_paragraphs.append(
+                f"{cat.replace('_', '/').title()}: " + " | ".join(bullet_calls)
+            )
+
+    # ---- CONFLICTS section (tickers where analysts disagree) ----
+    conflict_lines: list[str] = []
+    for ticker, calls in by_ticker.items():
+        dirs = {_direction_from_call(c.get("analyst_call", "")) for c in calls}
+        if len(dirs) > 1:
+            srcs = ", ".join(sorted({c.get("source_key", "?") for c in calls}))
+            conflict_lines.append(f"  {ticker}: {' / '.join(sorted(dirs))} ({srcs})")
+    if not conflict_lines:
+        # Surface theme-level conflicts if any source disagrees on direction
+        macro_dirs: dict[str, list[str]] = defaultdict(list)
+        for s in ticker_less:
+            d = _direction_from_call(s.get("analyst_call", ""))
+            macro_dirs[d].append(s.get("source_key", "?"))
+        if len(macro_dirs) >= 3:
+            sample_dirs = sorted(macro_dirs.keys())[:3]
+            conflict_lines.append(
+                f"  Macro outlook: split between {', '.join(sample_dirs)} across sources"
+            )
+
+    # ---- HIGH-CONVICTION CALLS (confidence >= 0.7) ----
+    hc_lines: list[str] = []
+    high_conv = [s for s in summaries if float(s.get("confidence", 0) or 0) >= 0.7]
+    high_conv.sort(key=lambda s: -float(s.get("confidence", 0) or 0))
+    for s in high_conv[:8]:
+        src = s.get("source_key", "?")
+        call = (s.get("analyst_call") or "").strip()
+        conf = float(s.get("confidence", 0))
+        tickers = ", ".join(_normalize_tickers(s.get("tickers")))
+        prefix = f"[{tickers}] " if tickers else ""
+        hc_lines.append(f"  {prefix}{call} (source: {src}, confidence: {conf:.2f})")
+
+    # ---- Assemble ----
+    sections: list[str] = []
+
+    sections.append("TICKER CALLS:")
+    if ticker_lines:
+        sections.extend(ticker_lines)
+    else:
+        sections.append("  No ticker-specific calls in this digest.")
+
+    if theme_paragraphs:
+        sections.append("")
+        sections.append("THEMES:")
+        for p in theme_paragraphs:
+            sections.append(f"  {p}")
+
+    if conflict_lines:
+        sections.append("")
+        sections.append("CONFLICTS:")
+        sections.extend(conflict_lines)
+
+    if hc_lines:
+        sections.append("")
+        sections.append("HIGH-CONVICTION CALLS (confidence >= 0.7):")
+        sections.extend(hc_lines)
+
+    digest = "\n".join(sections)
+    print(
+        f"[PREPROCESS] Analyst digest: {len(digest)} chars, "
+        f"{len(by_ticker)} tickers, {len(ticker_less)} thematic, "
+        f"{len(hc_lines)} high-conviction"
     )
-
-    try:
-        raw = await call_llm(
-            system=ANALYST_DIGEST_SYSTEM,
-            user_msg=prompt,
-            tier="local_only",
-            temperature=0.3,
-            max_tokens=8192,
-        )
-        # Strip any thinking tokens
-        text = _strip_llm_wrapper(raw).strip()
-        if len(text) < 50:
-            print(f"[PREPROCESS] Analyst digest too short ({len(text)} chars)")
-            return None
-        print(f"[PREPROCESS] Analyst digest: {len(text)} chars from {len(summaries)} articles")
-        return text
-    except Exception as e:
-        print(f"[PREPROCESS] Analyst digest compression failed: {e}")
-        return None
+    return digest
 
 
 async def run_analyst_summarization() -> tuple[list[dict], str | None]:

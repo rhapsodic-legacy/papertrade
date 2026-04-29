@@ -32,12 +32,12 @@ ANALYST_SOURCES: list[dict] = [
     {"key": "calculated_risk", "name": "Calculated Risk", "url": "https://www.calculatedriskblog.com/feeds/posts/default?alt=rss", "category": "macro"},
     {"key": "pragcap", "name": "Pragmatic Capitalism", "url": "https://www.pragcap.com/feed/", "category": "macro"},
     {"key": "mishtalk", "name": "Mish Talk", "url": "https://mishtalk.com/feed", "category": "macro"},
-    {"key": "kyla_scanlon", "name": "Kyla Scanlon", "url": "https://kylascanlon.com/feed", "category": "macro"},
-    {"key": "noahpinion", "name": "Noahpinion", "url": "https://noahpinion.substack.com/feed", "category": "macro"},
+    {"key": "lyn_alden", "name": "Lyn Alden", "url": "https://www.lynalden.com/feed/", "category": "macro"},
     # Crypto
-    {"key": "bankless", "name": "Bankless", "url": "https://bankless.com/blog/rss.xml", "category": "crypto"},
-    {"key": "messari", "name": "Messari Research", "url": "https://messari.io/rss", "category": "crypto"},
-    {"key": "the_block", "name": "The Block Research", "url": "https://www.theblock.co/rss", "category": "crypto"},
+    {"key": "coindesk", "name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "category": "crypto"},
+    {"key": "decrypt", "name": "Decrypt", "url": "https://decrypt.co/feed", "category": "crypto"},
+    {"key": "cointelegraph", "name": "CoinTelegraph", "url": "https://cointelegraph.com/rss", "category": "crypto"},
+    {"key": "the_defiant", "name": "The Defiant", "url": "https://thedefiant.io/feed", "category": "crypto"},
     # Tech/Finance
     {"key": "the_diff", "name": "The Diff", "url": "https://www.thediff.co/feed", "category": "tech_finance"},
 ]
