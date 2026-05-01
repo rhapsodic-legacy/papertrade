@@ -261,6 +261,32 @@ def _jittered_risk_params(base: dict, model_key: str) -> dict:
     return params
 
 
+# Per-(personality, model) risk parameter overrides. Used when a specific
+# pairing exhibits a behavioral problem the personality-level params can't
+# correct on their own.
+_MODEL_RISK_OVERRIDES: dict[tuple[str, str], dict] = {
+    # Crypto Chad on DeepSeek V3.2 was the worst trader in the fleet across
+    # weeks 1-2 (-2.03% / alpha -3.08 by 2026-04-30). The pre-buy discipline
+    # preface (2026-04-29) helped the buy/sell ratio but P&L kept bleeding.
+    # Tightening max_position_pct from 20% to 15% forces the MANDATORY RISK
+    # ACTION trigger sooner — preventing the over-allocation pattern that
+    # had ETH grow to 46% before any trim.
+    ("crypto_chad", "nvidia-deepseek-r1"): {"max_position_pct": 15.0},
+}
+
+
+def _resolve_risk_params(base: dict, personality_key: str, model_key: str) -> dict:
+    """Resolve final risk_params for a specific trader by applying:
+       1. Model-specific max_hold_days jitter (anti-convergence)
+       2. (personality, model) overrides for known-bad pairings
+    Returns a fresh dict — does not mutate the input."""
+    params = _jittered_risk_params(base, model_key)
+    override = _MODEL_RISK_OVERRIDES.get((personality_key, model_key))
+    if override:
+        params.update(override)
+    return params
+
+
 # Custom trader model (uses third Mistral API key)
 CUSTOM_TRADER_MODEL = {
     "label": "Custom (Mistral)",
@@ -1755,9 +1781,9 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
     model_cfg = CUSTOM_TRADER_MODEL if model_key == "custom" else MODELS[model_key]
 
     # Portfolio risk analysis (with personality-specific risk alerts + ATR stops + earnings).
-    # max_hold_days is jittered per model so same-personality traders don't all hit
-    # the stale-position trigger on the same day.
-    risk_params = _jittered_risk_params(personality.get("risk_params", {}), model_key)
+    # Risk params are jittered per model (anti-convergence) and may carry
+    # (personality, model) overrides for known-bad pairings.
+    risk_params = _resolve_risk_params(personality.get("risk_params", {}), personality_key, model_key)
     risk_analysis = _compute_portfolio_risk(portfolio, personality_key, brief=brief, override_risk_params=risk_params)
 
     # Build the user message via modular toolkit
@@ -2329,7 +2355,7 @@ async def _run_trader(
         trades, cond_orders = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 
         # Execute trades (with ATR-based position cap + optimizer sizing)
-        trade_risk_params = _jittered_risk_params(personality.get("risk_params", {}), model_key)
+        trade_risk_params = _resolve_risk_params(personality.get("risk_params", {}), personality_key, model_key)
         executed = []
         for trade in trades:
             result = await _execute_ai_trade(

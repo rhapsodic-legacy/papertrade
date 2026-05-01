@@ -538,11 +538,19 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
 
     from collections import defaultdict
 
+    # Universe filter — only surface ticker calls for assets the fleet can
+    # actually trade. Without this filter, Decrypt's daily roundups dump 100+
+    # micro-caps into the digest that the model has to skim past.
+    from app.services.market_data import TOP_STOCKS, CRYPTO_MAP
+    universe = set(TOP_STOCKS.keys()) | set(CRYPTO_MAP.keys())
+
     # ---- TICKER CALLS section ----
     by_ticker: dict[str, list[dict]] = defaultdict(list)
     ticker_less: list[dict] = []
     for s in summaries:
         tickers = _normalize_tickers(s.get("tickers"))
+        # Keep only tickers in the trading universe
+        tickers = [t for t in tickers if t in universe]
         if tickers:
             for t in tickers:
                 by_ticker[t].append(s)
@@ -550,12 +558,12 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
             ticker_less.append(s)
 
     # Score each ticker by max confidence across its calls; drop tickers whose
-    # top call is below 0.45 (filters out the price-roundup spam where every
-    # coin gets a low-confidence NEUTRAL/SELL tag).
+    # top call is below 0.65 — only surface high-conviction calls so the digest
+    # stays small enough that traders actually engage with it.
     ticker_rows: list[tuple[float, str]] = []
     for ticker, calls in by_ticker.items():
         max_conf = max(float(c.get("confidence", 0.5) or 0.5) for c in calls)
-        if max_conf < 0.45:
+        if max_conf < 0.65:
             continue
 
         dirs_by_source: dict[str, str] = {}
@@ -582,40 +590,30 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
             line = f"  {ticker} — {direction_str}: {rationales[0][:200] if rationales else 'no rationale'}, confidence {max_conf:.2f}"
         ticker_rows.append((max_conf, line))
 
-    # Sort by confidence descending; cap at 25 to keep the digest readable
+    # Sort by confidence descending; cap at 8 so the section stays snack-sized.
+    # Diagnostic rationale: the 8.6K-char digest from 2026-04-30 was ignored
+    # by all 25 traders. Compressing aggressively to ~1500 chars total.
     ticker_rows.sort(key=lambda x: -x[0])
-    ticker_lines = [line for _, line in ticker_rows[:25]]
+    ticker_lines = [line for _, line in ticker_rows[:8]]
 
-    # ---- THEMES section (ticker-less summaries grouped by source category) ----
-    by_category: dict[str, list[dict]] = defaultdict(list)
-    for s in ticker_less:
-        cat = s.get("category", "macro")
-        by_category[cat].append(s)
+    # THEMES section dropped intentionally — adopted on 2026-05-01 after the
+    # 25-trader fleet ignored a 8.6K-char digest entirely. Themes are macro
+    # narrative without ticker hooks; they crowd out the actionable callouts.
 
-    theme_paragraphs: list[str] = []
-    for cat in ("macro", "tech_finance", "crypto"):
-        items = by_category.get(cat, [])
-        if not items:
-            continue
-        # 1-paragraph summary per category citing each analyst's call
-        bullet_calls = []
-        for s in items[:5]:  # cap at 5 per category to control digest size
-            src = s.get("source_key", "unknown")
-            call = (s.get("analyst_call") or "").strip()
-            if call:
-                bullet_calls.append(f"[{src}] {call}")
-        if bullet_calls:
-            theme_paragraphs.append(
-                f"{cat.replace('_', '/').title()}: " + " | ".join(bullet_calls)
-            )
-
-    # ---- CONFLICTS section (tickers where analysts disagree) ----
+    # ---- CONFLICTS section (tickers where MULTIPLE sources disagree) ----
+    # Single-source "conflicts" (e.g. decrypt's daily roundup hitting all 4
+    # directions across one article) are noise, not signal — require >= 2
+    # distinct sources for an entry to qualify.
     conflict_lines: list[str] = []
     for ticker, calls in by_ticker.items():
+        sources = {c.get("source_key", "?") for c in calls}
+        if len(sources) < 2:
+            continue
         dirs = {_direction_from_call(c.get("analyst_call", "")) for c in calls}
         if len(dirs) > 1:
-            srcs = ", ".join(sorted({c.get("source_key", "?") for c in calls}))
+            srcs = ", ".join(sorted(sources))
             conflict_lines.append(f"  {ticker}: {' / '.join(sorted(dirs))} ({srcs})")
+    conflict_lines = conflict_lines[:5]  # cap to keep section tight
     if not conflict_lines:
         # Surface theme-level conflicts if any source disagrees on direction
         macro_dirs: dict[str, list[str]] = defaultdict(list)
@@ -648,12 +646,6 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
         sections.extend(ticker_lines)
     else:
         sections.append("  No ticker-specific calls in this digest.")
-
-    if theme_paragraphs:
-        sections.append("")
-        sections.append("THEMES:")
-        for p in theme_paragraphs:
-            sections.append(f"  {p}")
 
     if conflict_lines:
         sections.append("")
