@@ -2191,9 +2191,15 @@ async def _run_trader(
         recent_trades = _get_ai_trade_history(db, user_id, limit=15)
         trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
 
-        # Append reflection lessons if available
+        # Append synthesized personal rulebook + recent reflection lessons.
+        # Rules first (extracted patterns across many trades), then individual
+        # recent reflections (point-in-time lessons). The rulebook is what
+        # actually drives behavior change; individual reflections are evidence.
         try:
-            from app.services.reflection import get_reflection_memory
+            from app.services.reflection import synthesize_personal_rules, get_reflection_memory
+            rulebook = synthesize_personal_rules(db, user_id, lookback_days=30, top_n=6)
+            if rulebook:
+                trade_memory += "\n\n" + rulebook
             reflections = get_reflection_memory(db, user_id, limit=5)
             if reflections:
                 trade_memory += "\n\n" + reflections

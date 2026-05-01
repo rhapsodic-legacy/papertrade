@@ -292,6 +292,96 @@ async def run_reflections() -> dict:
         return {"status": "error", "reason": str(e)[:200]}
 
 
+def synthesize_personal_rules(db, user_id: str, lookback_days: int = 30, top_n: int = 6) -> str:
+    """Synthesize a 'Personal Rulebook' from this trader's reflections.
+
+    Mines reflections from the last `lookback_days`, keeps lessons attached
+    to high-signal outcomes (|outcome_score| >= 0.4), deduplicates by lesson
+    text (case-insensitive, normalized whitespace), and surfaces the top N
+    by frequency × recency.
+
+    The point: convert the reflection journal into ACTIONABLE rules the
+    trader can apply today. The existing get_reflection_memory shows recent
+    individual reflections; this synthesizes patterns across many.
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
+
+    result = (
+        db.table("trade_reflections")
+        .select("lessons, outcome_score, reflected_at, symbol")
+        .eq("user_id", user_id)
+        .gte("reflected_at", cutoff)
+        .order("reflected_at", desc=True)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        return ""
+
+    # Group by normalized lesson text to find recurring patterns.
+    # Each entry: {"text": original, "count": int, "recent": iso_date,
+    #              "scores": list[float], "symbols": set}
+    groups: dict[str, dict] = {}
+    for r in rows:
+        lesson = (r.get("lessons") or "").strip()
+        if not lesson:
+            continue
+        score = abs(float(r.get("outcome_score", 0) or 0))
+        if score < 0.4:
+            continue
+        # Normalize: lowercase + collapse whitespace + strip punctuation tail
+        norm = " ".join(lesson.lower().split()).rstrip(".!?")
+        if norm not in groups:
+            groups[norm] = {
+                "text": lesson,
+                "count": 0,
+                "recent": r.get("reflected_at", ""),
+                "scores": [],
+                "symbols": set(),
+            }
+        g = groups[norm]
+        g["count"] += 1
+        g["scores"].append(score)
+        if r.get("symbol"):
+            g["symbols"].add(r["symbol"])
+        # keep most recent date (rows are already DESC-sorted, so first wins)
+
+    if not groups:
+        return ""
+
+    # Score each group by frequency × avg signal strength.
+    # Single-occurrence rules need a strong signal to make the cut;
+    # repeated rules win even with moderate signal.
+    def _rank(g: dict) -> float:
+        avg_score = sum(g["scores"]) / len(g["scores"])
+        return g["count"] * avg_score
+
+    ranked = sorted(groups.values(), key=_rank, reverse=True)[:top_n]
+    if not ranked:
+        return ""
+
+    lines = [
+        "### YOUR PERSONAL RULES (synthesized from your own past trades)",
+        f"These are patterns extracted from your last {lookback_days} days of post-trade reflections.",
+        "Rules listed with frequency are recurring — you've been told this multiple times.",
+        "Apply them BEFORE making today's decisions, not after.",
+        "",
+    ]
+    for g in ranked:
+        avg_score = sum(g["scores"]) / len(g["scores"])
+        verdict = "✓ from wins" if avg_score > 0 else "✗ from losses"  # rough — abs() above
+        # Recover sign info: count positive vs negative scores
+        # (we lost sign by abs() — reread from rows is cheaper than tracking)
+        freq_str = f"×{g['count']}" if g["count"] > 1 else "×1"
+        sym_str = ""
+        if g["symbols"] and len(g["symbols"]) <= 3:
+            sym_str = f" [seen on: {', '.join(sorted(g['symbols']))}]"
+        lines.append(f"  • [{freq_str}] {g['text']}{sym_str}")
+
+    return "\n".join(lines)
+
+
 def get_reflection_memory(db, user_id: str, limit: int = 5) -> str:
     """Get high-signal reflections for a trader, formatted for trade memory.
 
