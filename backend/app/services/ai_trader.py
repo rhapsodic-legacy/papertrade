@@ -229,10 +229,10 @@ MODELS = {
         "model_id": "mistral-medium-latest",
     },
     "nvidia-deepseek-r1": {
-        "label": "DeepSeek V3.2 (NVIDIA)",
+        "label": "DeepSeek V4 Pro (NVIDIA)",
         "api": "nvidia",
         "api_key_field": "nvidia_api_key",
-        "model_id": "deepseek-ai/deepseek-v3.2",
+        "model_id": "deepseek-ai/deepseek-v4-pro",
     },
 }
 

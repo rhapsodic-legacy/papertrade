@@ -1134,6 +1134,22 @@ async def compile_market_brief() -> dict:
         "yield_curve": yield_curve,
     }
 
+    # Resilience fallbacks — if a transient fetch failure produces null data
+    # for a field that was healthy yesterday, reuse yesterday's value rather
+    # than blanking the field for 16 traders. Tag the field so downstream
+    # consumers can flag it as stale if they care.
+    if previous_brief:
+        if brief.get("yield_curve") is None and previous_brief.get("yield_curve"):
+            stale = dict(previous_brief["yield_curve"])
+            stale["stale_from_previous_day"] = True
+            brief["yield_curve"] = stale
+            print("[BRIEF] yield_curve fetch failed today; using yesterday's value")
+        if brief.get("options_flow") is None and previous_brief.get("options_flow"):
+            stale = dict(previous_brief["options_flow"])
+            stale["stale_from_previous_day"] = True
+            brief["options_flow"] = stale
+            print("[BRIEF] options_flow fetch failed today; using yesterday's value")
+
     # Compute day-over-day after regime/sectors are set
     if previous_brief:
         brief["day_over_day"] = _compute_day_over_day(brief, previous_brief)
