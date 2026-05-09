@@ -1292,17 +1292,38 @@ def _format_options_flow(brief: dict) -> str:
     if not flow:
         return ""
 
+    vix = flow.get("vix")
+    signal = flow.get("signal", "NEUTRAL")
+    trend = flow.get("trend")
+    change_pct = flow.get("change_5d_pct")
+    stale = flow.get("stale_from_previous_day")
+
+    # Build a one-line QUOTABLE callout the model can drop verbatim into
+    # reasoning. Same playbook as the Trade Context KEY PATTERN line and the
+    # Expert Opinion ticker callouts — short, citable, ranked-up in the prompt.
+    quotable_parts = []
+    if vix is not None:
+        quotable_parts.append(f"VIX {vix} ({signal})")
+    if trend and change_pct is not None:
+        quotable_parts.append(f"{trend} {change_pct:+.1f}% 5d")
+    if stale:
+        quotable_parts.append("[stale, fallback]")
+    quotable = ", ".join(quotable_parts)
+
     lines = [
         "### Options Flow (VIX — CBOE Volatility Index)",
+    ]
+    if quotable:
+        lines.append(f"QUOTABLE: {quotable} — cite this directly when adjusting risk-on/off positioning today.")
+        lines.append("")
+    lines.extend([
         "NOTE: VIX measures expected 30-day S&P 500 volatility, derived from options prices. "
         "It is the market's consensus FEAR level. Different strategies interpret fear differently — "
         "a momentum trader sees high VIX as a warning to reduce risk, while a contrarian sees "
         "it as a buying opportunity. Apply YOUR strategy's logic.",
-    ]
+    ])
 
-    vix = flow.get("vix")
     if vix is not None:
-        signal = flow.get("signal", "NEUTRAL")
         lines.append(f"  VIX level: {vix} ({signal})")
         if signal == "EXTREME_FEAR":
             lines.append("  Context: VIX above 35 — options market pricing in severe turbulence. "

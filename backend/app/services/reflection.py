@@ -8,6 +8,7 @@ Single Groq batch call reviews all trades from 3-5 days ago where price moved >3
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 
 import httpx
@@ -292,18 +293,59 @@ async def run_reflections() -> dict:
         return {"status": "error", "reason": str(e)[:200]}
 
 
+_SUBSTANTIVE_RULE_PATTERN = re.compile(
+    # Numerical anchors
+    r"\d+(?:\.\d+)?\s*%"            # 5%, 12.5%
+    r"|\$\d"                         # $50, $5000
+    r"|\d+\s*-?\s*day"               # 5-day, 30 day
+    r"|\d+d\b"                       # 5d, 30d
+    r"|\d+\s*trade"                  # 12 trades
+    r"|\d+\s*win"                    # 67 win
+    r"|\d+:\d+"                      # 2:1 ratio
+    # Named technical / fundamental indicators
+    r"|\bRSI\b"
+    r"|\bSMA\b|\bEMA\b"
+    r"|\bMACD\b"
+    r"|\bATR\b"
+    r"|\bPE\b|P/E"
+    r"|\bbeta\b"
+    r"|Bollinger"
+    r"|composite\s+signal|signal\s+score"
+    # Concrete trading concepts (strong-signal verbs/nouns)
+    r"|\bstop[- ]loss\b"
+    r"|\btake[- ]profit\b"
+    r"|\btrailing\s+stop\b"
+    r"|\bdrawdown\b"
+    r"|\boverbought\b|\boversold\b"
+    r"|\bbreakout\b|\bbreakdown\b"
+    r"|insider\s+(buying|selling)"
+    r"|earnings\s+(beat|miss|risk)"
+    r"|max\s+hold|hold\s+period",
+    re.IGNORECASE,
+)
+
+
+def _is_substantive_rule(text: str) -> bool:
+    """Filter for rules that cite specific numbers, named indicators, or
+    concrete trading concepts. Pure platitudes ('be patient', 'trust your
+    signals', 'diversify') get rejected. The bar: does the lesson contain
+    SOMETHING the trader can apply mechanically to today's decision?"""
+    return bool(_SUBSTANTIVE_RULE_PATTERN.search(text or ""))
+
+
 def synthesize_personal_rules(db, user_id: str, lookback_days: int = 30, top_n: int = 6) -> str:
     """Synthesize a 'Personal Rulebook' from this trader's reflections.
 
     Mines reflections from the last `lookback_days`, keeps lessons attached
-    to high-signal outcomes (|outcome_score| >= 0.4), deduplicates by lesson
-    text (case-insensitive, normalized whitespace), and surfaces the top N
-    by frequency × recency.
+    to high-signal outcomes (|outcome_score| >= 0.4) AND containing numerical
+    anchors (RSI thresholds, % drops, $ levels, day counts, named indicators),
+    deduplicates by lesson text, and surfaces the top N.
 
-    The point: convert the reflection journal into ACTIONABLE rules the
-    trader can apply today. The existing get_reflection_memory shows recent
-    individual reflections; this synthesizes patterns across many.
+    The quantitative filter is the second iteration after v1 produced 0 citations
+    across a 7-day window — generic platitudes don't change behavior, but rules
+    that name specific numbers are quotable and decision-altering.
     """
+    import re as _re
     from datetime import datetime, timezone, timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
 
@@ -329,6 +371,12 @@ def synthesize_personal_rules(db, user_id: str, lookback_days: int = 30, top_n: 
             continue
         score = abs(float(r.get("outcome_score", 0) or 0))
         if score < 0.4:
+            continue
+        # Substantive-rule filter: only keep lessons that cite numbers,
+        # named indicators (RSI/MACD/ATR/PE/SMA/beta), or concrete trading
+        # concepts (stop-loss, drawdown, overbought, earnings, etc.).
+        # Pure platitudes ("trust your signals", "be patient") get rejected.
+        if not _is_substantive_rule(lesson):
             continue
         # Normalize: lowercase + collapse whitespace + strip punctuation tail
         norm = " ".join(lesson.lower().split()).rstrip(".!?")
