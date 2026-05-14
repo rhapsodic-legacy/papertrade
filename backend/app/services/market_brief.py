@@ -951,6 +951,26 @@ async def _get_previous_brief() -> dict | None:
     return None
 
 
+async def _get_last_known_field(field: str, max_lookback: int = 7) -> dict | None:
+    """Walk back through recent briefs and return the most recent non-null value
+    for a given field. Used for resilience fallbacks — a single transient fetch
+    failure (or a multi-day cascade) shouldn't blank a field if ANY recent brief
+    had it. Returns None if no brief in the lookback window has the field."""
+    db = get_supabase_admin()
+    resp = (
+        db.table("market_briefs")
+        .select("brief_date, brief_data")
+        .order("brief_date", desc=True)
+        .limit(max_lookback)
+        .execute()
+    )
+    for row in (resp.data or []):
+        value = (row.get("brief_data") or {}).get(field)
+        if value:
+            return {"value": value, "date": row.get("brief_date")}
+    return None
+
+
 def _compute_day_over_day(current_brief: dict, previous_brief: dict) -> dict:
     """Compute changes between today and yesterday's brief."""
     dod = {}
@@ -1134,21 +1154,21 @@ async def compile_market_brief() -> dict:
         "yield_curve": yield_curve,
     }
 
-    # Resilience fallbacks — if a transient fetch failure produces null data
-    # for a field that was healthy yesterday, reuse yesterday's value rather
-    # than blanking the field for 16 traders. Tag the field so downstream
-    # consumers can flag it as stale if they care.
-    if previous_brief:
-        if brief.get("yield_curve") is None and previous_brief.get("yield_curve"):
-            stale = dict(previous_brief["yield_curve"])
-            stale["stale_from_previous_day"] = True
-            brief["yield_curve"] = stale
-            print("[BRIEF] yield_curve fetch failed today; using yesterday's value")
-        if brief.get("options_flow") is None and previous_brief.get("options_flow"):
-            stale = dict(previous_brief["options_flow"])
-            stale["stale_from_previous_day"] = True
-            brief["options_flow"] = stale
-            print("[BRIEF] options_flow fetch failed today; using yesterday's value")
+    # Resilience fallbacks — if a transient fetch failure produces null data,
+    # walk back through recent briefs (up to 7 days) for the most recent
+    # non-null value rather than blanking the field for the traders that use
+    # it. Tagged stale_from_previous_day so downstream consumers know.
+    # v2 (2026-05-14): walk-back instead of single previous_brief lookup —
+    # the old version cascaded when two consecutive days both failed.
+    for field in ("yield_curve", "options_flow"):
+        if brief.get(field) is None:
+            last_known = await _get_last_known_field(field)
+            if last_known:
+                stale = dict(last_known["value"])
+                stale["stale_from_previous_day"] = True
+                stale["stale_source_date"] = last_known["date"]
+                brief[field] = stale
+                print(f"[BRIEF] {field} fetch failed; using value from {last_known['date']}")
 
     # Compute day-over-day after regime/sectors are set
     if previous_brief:

@@ -635,10 +635,37 @@ async def _call_mistral(model_id: str, system: str, user_msg: str, api_key: str)
     raise Exception(f"Mistral {model_id} failed after 3 attempts: {last_err}")
 
 
+# NVIDIA NIM circuit breaker — module-level state for one pipeline run.
+# When NIM has a capacity event (as on 2026-05-13, 4/5 DeepSeek traders
+# hung for 590s+ before retry-exhaust), there's no value in the remaining
+# traders each burning the full retry budget. After _NVIDIA_FAIL_THRESHOLD
+# consecutive failures, subsequent calls fail fast until a success resets it.
+_NVIDIA_FAIL_THRESHOLD = 2
+_nvidia_consecutive_failures = 0
+
+
+def _reset_nvidia_circuit() -> None:
+    """Reset the NVIDIA circuit breaker — call at the start of each pipeline run."""
+    global _nvidia_consecutive_failures
+    _nvidia_consecutive_failures = 0
+
+
 async def _call_nvidia_nim(model_id: str, system: str, user_msg: str, api_key: str) -> str:
-    """Call NVIDIA NIM (OpenAI-compatible) with retry on rate limit / disconnect.
+    """Call NVIDIA NIM (OpenAI-compatible) with fast-fail retry + circuit breaker.
     Free tier is 40 RPM per model. The endpoint lives at
-    https://integrate.api.nvidia.com/v1/chat/completions."""
+    https://integrate.api.nvidia.com/v1/chat/completions.
+
+    Timeouts are kept tight (45s) with 2 attempts — a hung NIM endpoint should
+    fail in ~90s, not ~9min. After _NVIDIA_FAIL_THRESHOLD consecutive failures
+    across the run, calls trip the circuit and fail immediately."""
+    global _nvidia_consecutive_failures
+
+    if _nvidia_consecutive_failures >= _NVIDIA_FAIL_THRESHOLD:
+        raise Exception(
+            f"NVIDIA circuit breaker open ({_nvidia_consecutive_failures} consecutive "
+            f"failures) — skipping {model_id} to preserve pipeline budget"
+        )
+
     url = "https://integrate.api.nvidia.com/v1/chat/completions"
     payload = {
         "model": model_id,
@@ -650,29 +677,31 @@ async def _call_nvidia_nim(model_id: str, system: str, user_msg: str, api_key: s
         "max_tokens": 2048,
     }
     last_err = None
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=180) as client:
+            async with httpx.AsyncClient(timeout=45) as client:
                 resp = await client.post(
                     url,
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json=payload,
                 )
                 if resp.status_code == 429:
-                    wait = 10 * (attempt + 1)
-                    print(f"[NVIDIA] {model_id} rate-limited, waiting {wait}s (attempt {attempt + 1}/3)")
+                    wait = 8 * (attempt + 1)
+                    print(f"[NVIDIA] {model_id} rate-limited, waiting {wait}s (attempt {attempt + 1}/2)")
                     await asyncio.sleep(wait)
                     continue
                 if resp.status_code != 200:
                     raise Exception(f"NVIDIA {model_id} error {resp.status_code}: {resp.text[:300]}")
                 data = resp.json()
+                _nvidia_consecutive_failures = 0  # success resets the circuit
                 return data["choices"][0]["message"]["content"]
         except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
             last_err = e
-            wait = 8 * (attempt + 1)
-            print(f"[NVIDIA] {model_id} connection error: {type(e).__name__}, retrying in {wait}s (attempt {attempt + 1}/3)")
+            wait = 5 * (attempt + 1)
+            print(f"[NVIDIA] {model_id} connection error: {type(e).__name__}, retrying in {wait}s (attempt {attempt + 1}/2)")
             await asyncio.sleep(wait)
-    raise Exception(f"NVIDIA {model_id} failed after 3 attempts: {last_err}")
+    _nvidia_consecutive_failures += 1
+    raise Exception(f"NVIDIA {model_id} failed after 2 attempts: {last_err}")
 
 
 async def _call_groq(model_id: str, system: str, user_msg: str, api_key: str) -> str:
@@ -2450,6 +2479,7 @@ async def run_ai_trading(session: str = "close") -> dict:
     (Gemini Pro at 35s delay was the bottleneck).
     """
     print(f"[PIPELINE START] AI trading session={session}")
+    _reset_nvidia_circuit()  # fresh circuit breaker state for this run
     brief = await get_latest_brief()
     if not brief:
         print("[PIPELINE ERROR] No market brief available")
