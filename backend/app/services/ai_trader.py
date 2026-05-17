@@ -229,10 +229,10 @@ MODELS = {
         "model_id": "mistral-medium-latest",
     },
     "nvidia-deepseek-r1": {
-        "label": "DeepSeek V4 Pro (NVIDIA)",
+        "label": "Llama 4 Maverick (NVIDIA)",
         "api": "nvidia",
         "api_key_field": "nvidia_api_key",
-        "model_id": "deepseek-ai/deepseek-v4-pro",
+        "model_id": "meta/llama-4-maverick-17b-128e-instruct",
     },
 }
 
@@ -2220,20 +2220,13 @@ async def _run_trader(
         recent_trades = _get_ai_trade_history(db, user_id, limit=15)
         trade_memory = _format_trade_memory(recent_trades, portfolio["positions"])
 
-        # Append synthesized personal rulebook + recent reflection lessons.
-        # Rules first (extracted patterns across many trades), then individual
-        # recent reflections (point-in-time lessons). The rulebook is what
-        # actually drives behavior change; individual reflections are evidence.
-        try:
-            from app.services.reflection import synthesize_personal_rules, get_reflection_memory
-            rulebook = synthesize_personal_rules(db, user_id, lookback_days=30, top_n=6)
-            if rulebook:
-                trade_memory += "\n\n" + rulebook
-            reflections = get_reflection_memory(db, user_id, limit=5)
-            if reflections:
-                trade_memory += "\n\n" + reflections
-        except Exception:
-            pass
+        # Reflection-into-prompt deprecated 2026-05-17 after 21+ days of zero
+        # genuine citations across multiple iterations (synthesis-as-block,
+        # substantive filter, header variants). Reflections still run and feed
+        # the analytics dashboard + outcome scores used elsewhere; we just
+        # don't inject the LESSONS / PERSONAL RULES blocks into trade_memory
+        # anymore. Trade Context's KEY PATTERN line already surfaces the
+        # "your historical performance" angle and DOES get cited.
 
         # Inject conditional order context (pending + recently resolved)
         try:
