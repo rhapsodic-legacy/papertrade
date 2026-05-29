@@ -196,6 +196,107 @@ PERSONALITIES = {
             {"module": "trade_context", "weight": 7},
         ],
     },
+    # ----- v2 personalities (2026-05-29) — applied to the underperforming
+    # losing-money traders after 77 days of evidence. Profitable peers on
+    # the original personalities are left untouched. -----
+    "crypto_chad_swing": {
+        "name": "Crypto Chad New",
+        "prompt": (
+            "You are Crypto Chad New, a SWING TRADER specializing in liquid, "
+            "fundamentally-backed crypto. Your edge is PATIENCE and concentration, "
+            "not rotation speed. "
+            "ASSET UNIVERSE (strict): "
+            "Core (50-70% of crypto allocation): BTC, ETH only. "
+            "Utility plays (max 30% of crypto allocation): only assets with "
+            "demonstrated network usage — SOL (Solana DeFi), LINK (oracle infrastructure), "
+            "MATIC (L2), AVAX (L1), DOT (interop), ATOM (Cosmos), AUKI (spatial computing). "
+            "NO meme coins, NO sub-rank-50 tokens, NO yield farms. "
+            "Stocks: 20-30% AI/semi or fintech (NVDA, AMD, MSFT, AAPL) — correlated growth. "
+            "TRADING FREQUENCY: target 9-12 trades per MONTH total. Most days you make ZERO "
+            "trades. Outputting an empty trades list is the RIGHT answer on a normal day. "
+            "Only act when conditions are 'obvious' by swing-trader standards. "
+            "BUY criteria (need 2 of): RSI <35 on 14-day timeframe (clearly oversold, not "
+            "just a dip), down >20% from 30-day high, expert opinion digest shows >=2 sources "
+            "BULLISH with confidence >=0.7, OR Bitcoin RSI <40 AND we are already overweight "
+            "cash (>30%). "
+            "SELL criteria (any 1): RSI >70 AND position up >20% (clearly overbought after a "
+            "meaningful gain), expert opinion shifts to >=2 sources BEARISH with confidence "
+            ">=0.7, BTC breaks below SMA50 (regime change — trim ALL crypto by 30%), or "
+            "specific thesis broken (exploit, regulatory action) — NOT just price weakness. "
+            "ALLOCATION: Core BTC + ETH 40-50%, utility crypto 15-25%, tech/fintech stocks "
+            "20-30%, cash 10-25% as dry powder for sharp drawdowns. "
+            "DISCIPLINE: hold periods 30-90 days for core, 30-60 days for utility plays. "
+            "NO position held less than 14 days unless thesis-breaking news. "
+            "Cite the expert opinion source when analyst calls inform a BUY/SELL. "
+            "DO NOT chase momentum upward — wait for pullbacks. Patience is your edge."
+        ),
+        "risk_params": {
+            "stop_loss_pct": -15.0,
+            "take_profit_pct": 30.0,
+            "max_position_pct": 25.0,
+            "max_hold_days": 60,
+            "min_sells_with_positions": 0,
+        },
+        "toolkit": [
+            {"module": "expert_opinion", "weight": 10},
+            {"module": "technicals", "weight": 9},
+            {"module": "momentum", "weight": 8},
+            {"module": "fundamentals", "weight": 7},
+            {"module": "yield_curve", "weight": 6},
+            {"module": "trade_context", "weight": 7},
+            {"module": "optimizer", "weight": 5},
+            {"module": "patterns", "weight": 4},
+            {"module": "sentiment", "weight": 4},
+            {"module": "signal_ranker", "weight": 3},
+        ],
+    },
+    "contrarian_carl_patient": {
+        "name": "Contrarian Carl New",
+        "prompt": (
+            "You are Contrarian Carl New, a deep-value contrarian with long time horizons. "
+            "Your edge is PATIENCE and CONVICTION — most days you do nothing. "
+            "BUY criteria (need 2 of): RSI <25 (DEEPLY oversold, not just a dip), "
+            "down >15% from 30-day high (real dislocation, not minor pullback), "
+            "PE ratio in bottom quartile of 5-year range, "
+            "fundamentals intact (positive FCF, manageable debt, no recent guidance cuts), "
+            "OR insider buying (not just neutral). "
+            "SELL criteria (any 1): position up >30% (let winners run but take meaningful "
+            "gains), RSI >80 AND 30d return >25% (extreme over-extension), thesis broken "
+            "(missed guidance, accounting issue, structural change). "
+            "UNIVERSE: only S&P 500 names. NO biotech (binary outcomes), NO IPOs <2yr, NO "
+            "leverage. Diversify 6-10 names across sectors. NEVER concentrate >12% in one name. "
+            "TRADING FREQUENCY: 8-12 trades per MONTH total. Most days output ZERO trades. "
+            "Only big dislocations qualify — small dips do not. The market gives you 5-10 "
+            "obvious contrarian opportunities per year. Wait for them. "
+            "ALLOCATION: 75-85% high-conviction stocks, 15-25% cash as dry powder for sharp "
+            "drawdowns. "
+            "DISCIPLINE: hold periods 45-120 days minimum. NO trade <30 days unless thesis is "
+            "broken. Boring is good. Patience compounds. "
+            "When market regime is BEARISH and safe_haven_demand is HIGH, this is your "
+            "prime buying zone for quality names dragged down. "
+            "When everything is overbought (RSI >70 across the board), take meaningful "
+            "profits and build cash for the next downturn."
+        ),
+        "risk_params": {
+            "stop_loss_pct": -15.0,
+            "take_profit_pct": 30.0,
+            "max_position_pct": 12.0,
+            "max_hold_days": 90,
+            "min_sells_with_positions": 0,
+        },
+        "toolkit": [
+            {"module": "fundamentals", "weight": 10},
+            {"module": "expert_opinion", "weight": 9, "invert": True},
+            {"module": "macro", "weight": 8},
+            {"module": "patterns", "weight": 7},
+            {"module": "sentiment", "weight": 8, "invert": True},
+            {"module": "trade_context", "weight": 7},
+            {"module": "optimizer", "weight": 5},
+            {"module": "yield_curve", "weight": 6},
+            {"module": "options_flow", "weight": 5},
+            {"module": "signal_ranker", "weight": 3},
+        ],
+    },
 }
 
 # Model configurations
@@ -320,7 +421,13 @@ CUSTOM_RISK_PRESETS = {
     },
 }
 
-# All AI traders: 5 personalities x 4 models = 20
+# v2 personality keys — applied only to specific manually-renamed traders,
+# NOT auto-created by setup_ai_accounts. Listed here so they're skipped
+# in the AI_TRADERS auto-seed list.
+V2_PERSONALITY_KEYS = {"crypto_chad_swing", "contrarian_carl_patient"}
+
+
+# Auto-seeded AI traders: 5 base personalities x 5 models = 25
 AI_TRADERS = [
     {
         "personality_key": pkey,
@@ -328,7 +435,7 @@ AI_TRADERS = [
         "display_name": f"{pinfo['name']} ({minfo['label']})",
         "ai_model": f"{mkey}",
     }
-    for pkey, pinfo in PERSONALITIES.items()
+    for pkey, pinfo in PERSONALITIES.items() if pkey not in V2_PERSONALITY_KEYS
     for mkey, minfo in MODELS.items()
 ]
 
@@ -2140,13 +2247,17 @@ async def _run_trader(
     model_key = profile.get("ai_model", "")
     print(f"[PIPELINE] Starting trader: {display_name} (model={model_key})")
 
-    # Determine personality from display name (or custom trader config)
+    # Determine personality from display name (or custom trader config).
+    # Match on the LONGEST personality name that's a substring, so that
+    # variant names like "Crypto Chad New" win over "Crypto Chad" when both
+    # would otherwise substring-match.
     personality_key = None
     custom_personality = None
+    matched_len = 0
     for pkey, pinfo in PERSONALITIES.items():
-        if pinfo["name"] in display_name:
+        if pinfo["name"] in display_name and len(pinfo["name"]) > matched_len:
             personality_key = pkey
-            break
+            matched_len = len(pinfo["name"])
 
     if not personality_key and model_key == "custom":
         # Load custom trader config from DB
