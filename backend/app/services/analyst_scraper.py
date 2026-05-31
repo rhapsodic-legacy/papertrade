@@ -40,6 +40,15 @@ ANALYST_SOURCES: list[dict] = [
     {"key": "the_defiant", "name": "The Defiant", "url": "https://thedefiant.io/feed", "category": "crypto"},
     # Tech/Finance
     {"key": "the_diff", "name": "The Diff", "url": "https://www.thediff.co/feed", "category": "tech_finance"},
+    # Institutional / 13F-class — qualified-trader views that produce specific
+    # ticker calls (longs, shorts, hedge-fund holdings). Added 2026-05-30 in
+    # response to user-flagged Aschenbrenner short-semis thesis. These give
+    # the expert_opinion digest its strongest source of conviction-weighted
+    # ticker calls.
+    {"key": "linas", "name": "Linas Substack", "url": "https://linas.substack.com/feed", "category": "tech_finance"},
+    {"key": "net_interest", "name": "Net Interest (Marc Rubinstein)", "url": "https://www.netinterest.co/feed", "category": "tech_finance"},
+    {"key": "bear_cave", "name": "The Bear Cave", "url": "https://thebearcave.substack.com/feed", "category": "tech_finance"},
+    {"key": "bespoke", "name": "Bespoke Investment Group", "url": "https://www.bespokepremium.com/feed/", "category": "tech_finance"},
 ]
 
 # Max age for articles to scrape (72 hours)
