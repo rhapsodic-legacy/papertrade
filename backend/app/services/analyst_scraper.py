@@ -278,24 +278,61 @@ async def update_article_summary(article_id: str, summary_data: dict) -> None:
     db.table("analyst_content").update(summary_data).eq("id", article_id).execute()
 
 
+INSTITUTIONAL_SOURCE_KEYS = ("linas", "net_interest", "bear_cave", "bespoke")
+
+
 async def get_recent_digested_articles(hours: int = 72, min_confidence: float = 0.3) -> list[dict]:
     """Fetch recently summarized articles for RAG injection.
 
-    Only returns articles with confidence >= threshold.
+    Only returns articles with confidence >= threshold. Two-pool merge
+    (2026-06-01): a general pool (80 most recent) plus an institutional
+    pool (20 most recent from Linas/Net Interest/Bear Cave/Bespoke). The
+    institutional pool is queried separately because high-volume crypto
+    news otherwise crowds out lower-frequency institutional sources even
+    at the 80-article cap. The compress step applies reserved-slot
+    ranking on top of this combined pool.
     """
     db = get_supabase_admin()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    result = (
+    cols = "source_key, title, summary, tickers, sentiment, analyst_call, confidence, category"
+
+    general = (
         db.table("analyst_content")
-        .select("source_key, title, summary, tickers, sentiment, analyst_call, confidence, category")
+        .select(cols)
         .not_.is_("summary", "null")
         .gte("confidence", min_confidence)
         .gte("published_at", cutoff)
         .order("published_at", desc=True)
-        .limit(30)
+        .limit(80)
         .execute()
     )
-    return result.data or []
+
+    # Wider window (14 days) and lower confidence floor (0.5) on the
+    # institutional pool — these sources update less often and their
+    # confidence scores skew lower than crypto news.
+    inst_cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    institutional = (
+        db.table("analyst_content")
+        .select(cols)
+        .not_.is_("summary", "null")
+        .gte("confidence", 0.5)
+        .gte("published_at", inst_cutoff)
+        .in_("source_key", list(INSTITUTIONAL_SOURCE_KEYS))
+        .order("published_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+
+    # Merge, dedup by URL/title
+    seen = set()
+    merged = []
+    for row in (general.data or []) + (institutional.data or []):
+        key = row.get("title", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged
 
 
 # ---------------------------------------------------------------------------

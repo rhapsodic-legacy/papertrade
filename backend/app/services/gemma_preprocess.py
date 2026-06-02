@@ -557,10 +557,14 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
         else:
             ticker_less.append(s)
 
+    # Institutional sources get reserved slot priority — see 2026-06-01 below.
+    INSTITUTIONAL_SOURCES = {"linas", "net_interest", "bear_cave", "bespoke"}
+
     # Score each ticker by max confidence across its calls; drop tickers whose
     # top call is below 0.65 — only surface high-conviction calls so the digest
     # stays small enough that traders actually engage with it.
-    ticker_rows: list[tuple[float, str]] = []
+    # Each row: (max_conf, line, has_institutional_source)
+    ticker_rows: list[tuple[float, str, bool]] = []
     for ticker, calls in by_ticker.items():
         max_conf = max(float(c.get("confidence", 0.5) or 0.5) for c in calls)
         if max_conf < 0.65:
@@ -578,6 +582,8 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
                 rationales.append(ratl)
             confs.append(float(c.get("confidence", 0.5) or 0.5))
 
+        has_institutional = bool(set(dirs_by_source.keys()) & INSTITUTIONAL_SOURCES)
+
         unique_dirs = set(dirs_by_source.values())
         if len(unique_dirs) == 1:
             direction_str = next(iter(unique_dirs))
@@ -588,13 +594,27 @@ async def compress_analyst_digest(summaries: list[dict]) -> str | None:
                 f"{d} ({s})" for s, d in dirs_by_source.items()
             )
             line = f"  {ticker} — {direction_str}: {rationales[0][:200] if rationales else 'no rationale'}, confidence {max_conf:.2f}"
-        ticker_rows.append((max_conf, line))
+        ticker_rows.append((max_conf, line, has_institutional))
 
-    # Sort by confidence descending; cap at 8 so the section stays snack-sized.
-    # Diagnostic rationale: the 8.6K-char digest from 2026-04-30 was ignored
-    # by all 25 traders. Compressing aggressively to ~1500 chars total.
-    ticker_rows.sort(key=lambda x: -x[0])
-    ticker_lines = [line for _, line in ticker_rows[:8]]
+    # Reserved-slot ranking (2026-06-01): up to 3 of the 8 TICKER CALLS slots
+    # are reserved for institutional-source picks (Linas/Net Interest/Bear
+    # Cave/Bespoke). Without this reservation, crypto news sources (which
+    # routinely produce 0.85+ confidence) crowd out institutional content
+    # (which typically lands at 0.65-0.75). Result: traders see only crypto
+    # calls, and the institutional sources were 0/24 cited after 2 days.
+    inst_rows = sorted(
+        [r for r in ticker_rows if r[2]], key=lambda x: -x[0]
+    )
+    inst_reserved = inst_rows[:3]
+    inst_reserved_set = {r[1] for r in inst_reserved}
+    remaining_pool = sorted(
+        [r for r in ticker_rows if r[1] not in inst_reserved_set],
+        key=lambda x: -x[0],
+    )
+    cap = 8
+    remaining_count = cap - len(inst_reserved)
+    chosen = inst_reserved + remaining_pool[:remaining_count]
+    ticker_lines = [line for _, line, _ in chosen]
 
     # THEMES section dropped intentionally — adopted on 2026-05-01 after the
     # 25-trader fleet ignored a 8.6K-char digest entirely. Themes are macro
@@ -690,8 +710,12 @@ async def run_analyst_summarization() -> tuple[list[dict], str | None]:
             if summary_data:
                 await update_article_summary(article["id"], summary_data)
 
-    # Step 2: Fetch all recent summarized articles and compress into digest
-    recent = await get_recent_digested_articles()
+    # Step 2: Fetch all recent summarized articles and compress into digest.
+    # 7-day window (vs default 72h) so institutional sources — which publish
+    # less frequently than crypto news — get fair representation in the
+    # digest. Without this, Bespoke/Net Interest articles get excluded by
+    # a few hours and the reserved institutional slots stay empty.
+    recent = await get_recent_digested_articles(hours=168)
     digest = None
     if recent:
         digest = await compress_analyst_digest(recent)
