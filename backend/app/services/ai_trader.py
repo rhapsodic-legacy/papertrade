@@ -487,9 +487,13 @@ actively trimming, rotating, and rebalancing — not just accumulating.
 - For stocks, quantity must be a whole number >= 1.
 - For crypto, quantity can be a decimal (minimum 0.001).
 - Crypto markets are open 24/7. Stock markets are Mon-Fri, but you can place trades anytime.
-- You MUST make at least 1 trade every day. This is paper trading — there is zero risk. Not trading is the worst outcome.
+- Trade according to YOUR STRATEGY'S CRITERIA. If your strategy says to wait
+  for specific conditions (e.g. RSI<35, down >20% from 30d high) and those
+  conditions are not met today, OUTPUT ZERO TRADES. "Doing nothing" is a
+  valid and often correct answer for swing/patient strategies.
+- For active strategies (momentum, rotation), expect 1-3 trades per session.
 - Maximum 8 trades per day (enough to rebalance: sell overweight positions + buy new ones).
-- If you have no positions yet, build an initial portfolio of 4-6 assets matching your strategy.
+- If you have no positions yet AND your strategy permits, build an initial portfolio of 4-6 assets.
 
 ## Conditional Orders (Optional)
 You may also place conditional orders that execute automatically when price conditions are met. \
@@ -505,7 +509,14 @@ Good use cases: protecting a new position with a stop-loss, setting a limit buy 
 or trailing a winner. Maximum 3 conditional orders per day.
 
 Respond ONLY with valid JSON in this exact format, no other text:
-{"trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation). If a news cluster drove this decision, name it.", "modules_used": ["technicals", "fundamentals"], "cluster_ref": "Tech Earnings Beat"}], "conditional_orders": [{"symbol": "AAPL", "asset_type": "stock", "order_type": "stop_loss", "side": "sell", "quantity": 10, "trigger_price": 165.00, "reasoning": "Protect new position"}, {"symbol": "ETH", "asset_type": "crypto", "order_type": "trailing_stop", "side": "sell", "quantity": 0.5, "trail_pct": 8.0, "reasoning": "Ride momentum with 8% trail"}]}
+{"session_decision_rationale": "REQUIRED. 2-3 sentences. Step through your strategy's criteria for TODAY. State which BUY/SELL conditions are met or unmet, whether the Expert Opinion TICKER CALLS section has anything actionable for your universe, and explicitly justify why you ARE or ARE NOT trading today. If outputting zero trades, this field MUST explain why no criteria fired.", "trades": [{"symbol": "AAPL", "asset_type": "stock", "side": "buy", "quantity": 10, "reasoning": "Brief 1-2 sentence explanation of WHY this trade, citing specific data (e.g. RSI, PE, regime, sector rotation). If a news cluster drove this decision, name it.", "modules_used": ["technicals", "fundamentals"], "cluster_ref": "Tech Earnings Beat"}], "conditional_orders": [{"symbol": "AAPL", "asset_type": "stock", "order_type": "stop_loss", "side": "sell", "quantity": 10, "trigger_price": 165.00, "reasoning": "Protect new position"}, {"symbol": "ETH", "asset_type": "crypto", "order_type": "trailing_stop", "side": "sell", "quantity": 0.5, "trail_pct": 8.0, "reasoning": "Ride momentum with 8% trail"}]}
+
+"session_decision_rationale" is REQUIRED on EVERY response. It is your self-check — do
+your strategy's criteria actually trigger today, or are you trading on impulse? If the
+Expert Opinion digest has a relevant call (e.g. "TSM — BULLISH (bespoke), confidence 0.70"),
+cite it. If no criteria are met, the rationale must explicitly say so and "trades" should
+be an empty list.
+
 "modules_used" lists which of your Data Toolkit modules informed this trade decision. Use the module names from your toolkit manifest.
 "cluster_ref" (optional) — if a headline cluster from Market News influenced this trade, put the EXACT theme name from the clusters listed above. Do NOT invent cluster names. If no cluster is relevant, omit this field entirely. Only use theme names that appear verbatim in your Market News (clustered) section.
 "conditional_orders" is optional — omit the field entirely if you have no conditional orders this session.
@@ -1981,6 +1992,15 @@ async def _get_ai_trades(personality_key: str, model_key: str, brief: dict, port
             lines = [l for l in lines if not l.strip().startswith("```")]
             text = "\n".join(lines)
         parsed = json.loads(text)
+        # Log the required session_decision_rationale — gives visibility into
+        # the model's self-check before any trades are issued. Especially
+        # important for v2 swing/patient strategies where "no trade" is
+        # often the right answer.
+        rationale = (parsed.get("session_decision_rationale") or "").strip()
+        if rationale:
+            print(f"[RATIONALE] {personality_key}/{model_key}: {rationale[:300]}")
+        else:
+            print(f"[RATIONALE] {personality_key}/{model_key}: (missing — model skipped the required field)")
         trades = parsed.get("trades", [])
         if not isinstance(trades, list):
             logger.warning("AI response 'trades' field is not a list: %s", type(trades))
