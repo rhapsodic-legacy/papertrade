@@ -123,6 +123,13 @@ RAG_MODULES: dict[str, dict] = {
         "icon": "link",
         "color": "amber",
     },
+    "fleet_conviction": {
+        "label": "Fleet Conviction",
+        "description": "What the 20-trader AI fleet is collectively buying and selling — aggregate flow score and breadth per symbol. Each personality interprets fleet consensus differently (corroboration vs fade signal).",
+        "always_included": False,
+        "icon": "users",
+        "color": "indigo",
+    },
 }
 
 
@@ -145,6 +152,7 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "yield_curve": ["yield curve", "treasury", "2y", "10y", "spread", "inverted", "recession", "fed funds", "rate cut", "rate hike"],
     "expert_opinion": ["analyst opinion", "expert", "digest", "consensus view", "independent analyst", "wolf street", "bankless", "messari", "calculated risk"],
     "btc_onchain": ["mvrv", "nupl", "puell", "realized price", "hash rate", "active addresses", "funding rate", "long/short", "long short ratio", "on-chain", "miner capitulation", "contrarian buy zone"],
+    "fleet_conviction": ["fleet", "peer fleet", "consensus pick", "fleet flow", "fade the consensus", "the herd", "the fleet is", "fleet conviction", "controversial pick", "consensus accumulation", "consensus distribution"],
 }
 
 
@@ -1609,6 +1617,106 @@ def _format_btc_onchain(brief: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_fleet_conviction(fleet: dict | None, invert: bool = False) -> str:
+    """Show what the 20-trader AI fleet is collectively buying and selling.
+
+    `invert=True` is set for Contrarian Carl — flips the framing so the model
+    is told to FADE consensus instead of follow it.
+
+    Critical guardrail: we expose aggregate counts only, never which specific
+    trader bought what. Otherwise personalities would leak into each other.
+    """
+    if not fleet or not fleet.get("symbols"):
+        return ""
+
+    consensus = fleet.get("consensus_picks") or []
+    dumps = fleet.get("consensus_dumps") or []
+    controversial = fleet.get("controversial") or []
+    fleet_size = fleet.get("fleet_size") or 0
+    lookback = fleet.get("lookback_days", 3)
+
+    if not (consensus or dumps or controversial):
+        return ""
+
+    lines = ["### Fleet Conviction (cross-trader signal)"]
+
+    if invert:
+        lines.append(
+            "QUOTABLE (CONTRARIAN MODE): When the fleet is unanimous, you FADE it. "
+            "Consensus accumulation = potential top forming. Consensus distribution = "
+            "potential bottom forming. Controversial = where genuine alpha lives."
+        )
+    else:
+        lines.append(
+            "QUOTABLE: This is what the other 19 AI traders are doing — independent agents "
+            "reading the same brief. High consensus = corroboration. Split = ambiguity. "
+            "Use it as one input among many, not as instruction."
+        )
+    lines.append("")
+    lines.append(
+        f"NOTE: Aggregated from {fleet_size}-trader fleet over the last {lookback} days. "
+        "Flow score: +1.0 = unanimous buying, -1.0 = unanimous selling. "
+        "Breadth: % of fleet currently holding the symbol. Specific trader identities "
+        "are intentionally hidden to prevent strategy leakage."
+    )
+
+    if consensus:
+        if invert:
+            lines.append("")
+            lines.append("⚠ FADE CANDIDATES — fleet is piling in here (potential top forming):")
+        else:
+            lines.append("")
+            lines.append("Fleet ACCUMULATING (consensus buys):")
+        for p in consensus[:6]:
+            lines.append(
+                f"  {p['symbol']:6}  flow={p['flow_score']:+.2f}  "
+                f"buyers={p['unique_buyers']} vs sellers={p['unique_sellers']}  "
+                f"holders={p['breadth_pct']*100:.0f}% of fleet  [{p['conviction_label']}]"
+            )
+
+    if dumps:
+        if invert:
+            lines.append("")
+            lines.append("⚠ FADE CANDIDATES — fleet is dumping here (potential bottom forming):")
+        else:
+            lines.append("")
+            lines.append("Fleet DISTRIBUTING (consensus sells):")
+        for p in dumps[:6]:
+            lines.append(
+                f"  {p['symbol']:6}  flow={p['flow_score']:+.2f}  "
+                f"buyers={p['unique_buyers']} vs sellers={p['unique_sellers']}  "
+                f"holders={p['breadth_pct']*100:.0f}% of fleet  [{p['conviction_label']}]"
+            )
+
+    if controversial:
+        lines.append("")
+        if invert:
+            lines.append("ALPHA HUNTING GROUND — fleet is split, this is where independent analysis pays:")
+        else:
+            lines.append("CONTROVERSIAL — fleet is split, weight your own conviction:")
+        for p in controversial[:4]:
+            lines.append(
+                f"  {p['symbol']:6}  buyers={p['unique_buyers']} vs sellers={p['unique_sellers']}  "
+                f"holders={p['breadth_pct']*100:.0f}% of fleet"
+            )
+
+    lines.append("")
+    if invert:
+        lines.append(
+            "  SYNTHESIS: Your edge is going AGAINST the fleet when conviction is high. "
+            "Genuine contrarian moves require the fleet to be wrong AND visible. "
+            "Don't fade a controversial name — fade unanimous ones."
+        )
+    else:
+        lines.append(
+            "  SYNTHESIS: Fleet consensus is one corroborating input. "
+            "Strong consensus on quality names = corroboration. Strong consensus on hype = "
+            "warning sign. Use this with your other modules, don't substitute for them."
+        )
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Formatter dispatch table
 # ---------------------------------------------------------------------------
@@ -1632,6 +1740,9 @@ _MODULE_FORMATTERS = {
     "yield_curve": lambda ctx: _format_yield_curve(ctx["brief"]),
     "expert_opinion": lambda ctx: _format_expert_opinion(ctx["brief"], invert=ctx.get("invert", False)),
     "btc_onchain": lambda ctx: _format_btc_onchain(ctx["brief"]),
+    "fleet_conviction": lambda ctx: _format_fleet_conviction(
+        ctx.get("fleet_signals"), invert=ctx.get("invert", False)
+    ),
 }
 
 
@@ -1718,6 +1829,7 @@ def assemble_toolkit_prompt(
         "sizing": agentic_data.get("sizing"),
         "trade_context": agentic_data.get("trade_context"),
         "dynamic_risk": agentic_data.get("dynamic_risk"),
+        "fleet_signals": agentic_data.get("fleet_signals"),
     }
 
     for entry in sorted_toolkit:

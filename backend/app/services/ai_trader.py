@@ -50,6 +50,7 @@ PERSONALITIES = {
             {"module": "options_flow", "weight": 2},
             {"module": "yield_curve", "weight": 6},
             {"module": "dynamic_risk", "weight": 1},
+            {"module": "fleet_conviction", "weight": 5},
         ],
     },
     "steady_eddie": {
@@ -85,6 +86,7 @@ PERSONALITIES = {
             {"module": "signal_ranker", "weight": 3},
             {"module": "trade_context", "weight": 7},
             {"module": "dynamic_risk", "weight": 1},
+            {"module": "fleet_conviction", "weight": 4},
         ],
     },
     "yolo_bot": {
@@ -118,6 +120,7 @@ PERSONALITIES = {
             {"module": "signal_ranker", "weight": 4},
             {"module": "expert_opinion", "weight": 7},
             {"module": "trade_context", "weight": 7},
+            {"module": "fleet_conviction", "weight": 6},
         ],
     },
     "contrarian_carl": {
@@ -154,6 +157,7 @@ PERSONALITIES = {
             {"module": "trade_context", "weight": 7},
             {"module": "yield_curve", "weight": 6},
             {"module": "dynamic_risk", "weight": 1},
+            {"module": "fleet_conviction", "weight": 10, "invert": True},
         ],
     },
     "crypto_chad": {
@@ -271,6 +275,7 @@ PERSONALITIES = {
             {"module": "sentiment", "weight": 6},
             {"module": "yield_curve", "weight": 6},
             {"module": "optimizer", "weight": 5},
+            {"module": "fleet_conviction", "weight": 5},
             {"module": "signal_ranker", "weight": 3},
         ],
     },
@@ -389,6 +394,7 @@ PERSONALITIES = {
             {"module": "trade_context", "weight": 7},
             {"module": "yield_curve", "weight": 6},
             {"module": "optimizer", "weight": 5},
+            {"module": "fleet_conviction", "weight": 5},
             {"module": "patterns", "weight": 4},
             {"module": "sentiment", "weight": 4},
             {"module": "signal_ranker", "weight": 3},
@@ -435,6 +441,7 @@ PERSONALITIES = {
             {"module": "patterns", "weight": 7},
             {"module": "sentiment", "weight": 8, "invert": True},
             {"module": "trade_context", "weight": 7},
+            {"module": "fleet_conviction", "weight": 9, "invert": True},
             {"module": "optimizer", "weight": 5},
             {"module": "yield_curve", "weight": 6},
             {"module": "options_flow", "weight": 5},
@@ -2402,6 +2409,7 @@ async def _run_trader(
     db, brief: dict, profile: dict, session: str = "close",
     all_ai_positions: list[dict] | None = None,
     performance_intel: dict[str, str] | None = None,
+    fleet_signals: dict | None = None,
 ) -> dict:
     """Run a single AI trader: get portfolio, ask LLM, execute trades."""
     from datetime import datetime, timezone
@@ -2654,6 +2662,7 @@ async def _run_trader(
             "trade_context": trade_context,
             "dynamic_risk": dynamic_risk,
             "discipline": discipline,
+            "fleet_signals": fleet_signals,
         }
         trades, cond_orders = await _get_ai_trades(personality_key, model_key, brief, portfolio, trade_memory, session=session, agentic_context_data=agentic_data, custom_personality=custom_personality)
 
@@ -2723,6 +2732,7 @@ async def _run_provider_batch(
     db, brief: dict, profiles: list[dict], delay: int, session: str = "close",
     all_ai_positions: list[dict] | None = None,
     performance_intel: dict[str, str] | None = None,
+    fleet_signals: dict | None = None,
 ) -> list[dict]:
     """Run a batch of traders that share the same API provider, sequentially
     with the appropriate delay between calls."""
@@ -2730,7 +2740,7 @@ async def _run_provider_batch(
     print(f"[PIPELINE BATCH] Starting {len(profiles)} traders for provider={model_key}, delay={delay}s")
     results = []
     for i, profile in enumerate(profiles):
-        result = await _run_trader(db, brief, profile, session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
+        result = await _run_trader(db, brief, profile, session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel, fleet_signals=fleet_signals)
         results.append(result)
         # Delay between calls (skip after last one)
         if i < len(profiles) - 1:
@@ -2795,6 +2805,21 @@ async def run_ai_trading(session: str = "close") -> dict:
         print(f"[PIPELINE] Performance intel failed (non-blocking): {e}")
         performance_intel = {}
 
+    # Compute fleet conviction signals once (cross-trader aggregation).
+    # Non-blocking — if it fails, traders get no fleet signal but still trade.
+    fleet_signals: dict | None = None
+    try:
+        from app.services.fleet_signals import compute_fleet_signals
+        fleet_signals = await compute_fleet_signals(lookback_days=3)
+        if fleet_signals:
+            n_picks = len(fleet_signals.get("consensus_picks", []))
+            n_dumps = len(fleet_signals.get("consensus_dumps", []))
+            n_contro = len(fleet_signals.get("controversial", []))
+            print(f"[PIPELINE] Fleet signals: {n_picks} consensus picks, {n_dumps} dumps, {n_contro} controversial")
+    except Exception as e:
+        print(f"[PIPELINE] Fleet signals failed (non-blocking): {e}")
+        fleet_signals = None
+
     # Group profiles by model key (= API provider)
     by_model: dict[str, list[dict]] = {}
     for profile in ai_profiles.data:
@@ -2814,7 +2839,7 @@ async def run_ai_trading(session: str = "close") -> dict:
     for model_key, profiles in by_model.items():
         delay = PROVIDER_DELAYS.get(model_key, 5)
         non_gemini_batches.append(
-            _run_provider_batch(db, brief, profiles, delay, session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
+            _run_provider_batch(db, brief, profiles, delay, session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel, fleet_signals=fleet_signals)
         )
 
     # Run Gemini (sequential) in parallel with all non-Gemini providers
@@ -2822,11 +2847,11 @@ async def run_ai_trading(session: str = "close") -> dict:
         results = []
         if gemini_pro:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
+                await _run_provider_batch(db, brief, gemini_pro, PROVIDER_DELAYS["gemini-pro"], session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel, fleet_signals=fleet_signals)
             )
         if gemini_flash:
             results.extend(
-                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel)
+                await _run_provider_batch(db, brief, gemini_flash, PROVIDER_DELAYS["gemini-flash"], session=session, all_ai_positions=all_ai_positions, performance_intel=performance_intel, fleet_signals=fleet_signals)
             )
         return results
 
