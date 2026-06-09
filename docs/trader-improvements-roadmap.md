@@ -9,17 +9,17 @@ parked for future sessions.
 
 1. **On-chain crypto data** — Glassnode/IntoTheBlock/CryptoQuant-class metrics
    surfaced to Crypto Chad and Crypto Chad New. The BTC drawdown that started
-   2026-06-03 exposed how thin our crypto data is. **[NEXT — 1 of 4]**
+   2026-06-03 exposed how thin our crypto data is. **[DONE 2026-06-08]**
 2. **Real backtesting framework** — Strategy simulation against historical
    regimes. Would have caught the "buy oversold + trim on SMA50 break"
-   conflict before it shipped. **[NEXT — 2 of 4]**
+   conflict before it shipped. **[DONE 2026-06-09 — 11 conflicts flagged on old Chad rules]**
 3. **Cross-trader signal aggregation** — Surface "8 of 25 traders flagged
    TICKER as BUY today" as a fleet-conviction meta-signal. Free and
    immediate; traders currently discard this aggregate information.
-   **[NEXT — 3 of 4]**
+   **[DONE 2026-06-09 — Contrarian Carl gets invert=True framing]**
 4. **Cross-asset signals: DXY, Gold, real yields** — Crypto and tech inversely
    correlated with DXY strength. We track yield curve but not the dollar.
-   Cheap via FRED. **[NEXT — 4 of 4]**
+   Cheap via FRED. **[DONE 2026-06-09 — DXY, real 10Y, breakeven, WTI from FRED + gold via Yahoo]**
 
 ---
 
