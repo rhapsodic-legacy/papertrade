@@ -116,6 +116,13 @@ RAG_MODULES: dict[str, dict] = {
         "icon": "brain",
         "color": "rose",
     },
+    "btc_onchain": {
+        "label": "BTC On-Chain & Derivatives",
+        "description": "Bitcoin network and futures-market metrics — MVRV-Z, NUPL, Puell Multiple, hash rate, funding rates, long/short positioning",
+        "always_included": False,
+        "icon": "link",
+        "color": "amber",
+    },
 }
 
 
@@ -137,6 +144,7 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "options_flow": ["vix", "volatility index", "fear", "complacen", "options flow", "hedging", "cboe", "market stress"],
     "yield_curve": ["yield curve", "treasury", "2y", "10y", "spread", "inverted", "recession", "fed funds", "rate cut", "rate hike"],
     "expert_opinion": ["analyst opinion", "expert", "digest", "consensus view", "independent analyst", "wolf street", "bankless", "messari", "calculated risk"],
+    "btc_onchain": ["mvrv", "nupl", "puell", "realized price", "hash rate", "active addresses", "funding rate", "long/short", "long short ratio", "on-chain", "miner capitulation", "contrarian buy zone"],
 }
 
 
@@ -1505,6 +1513,102 @@ def _format_discipline(discipline: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _format_btc_onchain(brief: dict) -> str:
+    """Format BTC on-chain + derivatives metrics with regime classifications.
+    Lead with a QUOTABLE one-liner the model can drop into reasoning verbatim."""
+    oc = brief.get("btc_onchain")
+    if not oc:
+        return ""
+
+    lines = ["### BTC On-Chain & Derivatives"]
+
+    # Quotable summary line — same pattern as Trade Context KEY PATTERN and VIX QUOTABLE
+    quotable_parts = []
+    if "mvrv_z" in oc:
+        quotable_parts.append(f"MVRV-Z {oc['mvrv_z']:.2f} ({oc.get('mvrv_z_regime','?')})")
+    if "nupl" in oc:
+        quotable_parts.append(f"NUPL {oc['nupl']:.2f} ({oc.get('nupl_regime','?')})")
+    if "puell_multiple" in oc:
+        quotable_parts.append(f"Puell {oc['puell_multiple']:.2f} ({oc.get('puell_regime','?')})")
+    if "cohort_signal" in oc:
+        quotable_parts.append(f"cohort: {oc['cohort_signal']}")
+    if quotable_parts:
+        lines.append(f"QUOTABLE: {' | '.join(quotable_parts)} — cite these directly when reasoning about BTC/ETH entries.")
+        lines.append("")
+
+    lines.append(
+        "NOTE: These are network-level and futures-market metrics, independent "
+        "of price action. MVRV-Z and NUPL near 0 (or below) have called every "
+        "BTC cycle bottom since 2013. Puell <0.5 marks miner capitulation, "
+        "historically a buy signal. Funding rate and long/short ratio reveal "
+        "whether a drawdown is real selling or leveraged shake-out."
+    )
+
+    # Long-term valuation block
+    if any(k in oc for k in ("mvrv_z", "nupl", "realized_price", "puell_multiple")):
+        lines.append("")
+        lines.append("LONG-TERM VALUATION:")
+        if "mvrv_z" in oc:
+            lines.append(
+                f"  MVRV-Z Score: {oc['mvrv_z']:.2f} → {oc.get('mvrv_z_regime','?')}"
+                f"  (below 0 = deep bottom; 0-2 = accumulation; >7 = top)"
+            )
+        if "nupl" in oc:
+            lines.append(
+                f"  NUPL (Net Unrealized P/L): {oc['nupl']:.2f} → {oc.get('nupl_regime','?')}"
+                f"  (<0 = capitulation; 0-0.25 = hope/fear; >0.75 = euphoria)"
+            )
+        if "realized_price" in oc:
+            lines.append(
+                f"  Realized Price: ${oc['realized_price']:,.0f}"
+                f"  (network's average cost basis — BTC below this = aggregate holders losing)"
+            )
+        if "puell_multiple" in oc:
+            lines.append(
+                f"  Puell Multiple: {oc['puell_multiple']:.2f} → {oc.get('puell_regime','?')}"
+                f"  (<0.5 = miner capitulation buy zone; >4 = miner sell pressure / top)"
+            )
+
+    # Network health
+    if any(k in oc for k in ("hash_rate_eh", "active_addresses")):
+        lines.append("")
+        lines.append("NETWORK HEALTH:")
+        if "hash_rate_eh" in oc:
+            lines.append(f"  Hash rate: {oc['hash_rate_eh']:.1f} EH/s (high & rising = strong network conviction)")
+        if "active_addresses" in oc:
+            lines.append(f"  Active addresses (24h): {oc['active_addresses']:,.0f}")
+
+    # Derivatives
+    if any(k in oc for k in ("funding_rate_8h", "long_short_ratio")):
+        lines.append("")
+        lines.append("DERIVATIVES (Binance perpetuals):")
+        if "funding_rate_8h" in oc:
+            lines.append(
+                f"  Funding rate (8h): {oc['funding_rate_8h']:+.4f}% "
+                f"(~{oc.get('funding_rate_apr', 0):+.1f}% APR) → {oc.get('funding_signal','?')}"
+            )
+        if "long_short_ratio" in oc:
+            lines.append(
+                f"  Long/Short ratio: {oc['long_short_ratio']:.2f} "
+                f"({oc.get('long_account_pct','?')}% long accounts) → {oc.get('positioning_signal','?')}"
+            )
+
+    # Synthesis call-out
+    if oc.get("cohort_signal") == "CONTRARIAN_BUY_ZONE":
+        lines.append("")
+        lines.append(
+            "  SYNTHESIS: Multiple long-term valuation metrics are signaling "
+            "ACCUMULATION ZONE simultaneously — this combination historically "
+            "marks BTC cycle bottoms. For Tier 1 BTC/ETH strategies, this is "
+            "the highest-conviction kind of buy signal on-chain data provides."
+        )
+    elif oc.get("cohort_signal") == "TOP_OR_NEUTRAL":
+        lines.append("")
+        lines.append("  SYNTHESIS: Valuation metrics not in accumulation zone. Standard buy criteria apply.")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Formatter dispatch table
 # ---------------------------------------------------------------------------
@@ -1527,6 +1631,7 @@ _MODULE_FORMATTERS = {
     "options_flow": lambda ctx: _format_options_flow(ctx["brief"]),
     "yield_curve": lambda ctx: _format_yield_curve(ctx["brief"]),
     "expert_opinion": lambda ctx: _format_expert_opinion(ctx["brief"], invert=ctx.get("invert", False)),
+    "btc_onchain": lambda ctx: _format_btc_onchain(ctx["brief"]),
 }
 
 

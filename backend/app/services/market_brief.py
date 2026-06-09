@@ -1083,7 +1083,7 @@ async def compile_market_brief() -> dict:
     # Social sentiment uses StockTwits (separate API) — safe to run in parallel
     social_symbols = [m["symbol"] for m in (movers_up[:5] + movers_down[:5])]
 
-    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending, options_flow, yield_curve = (
+    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending, options_flow, yield_curve, btc_onchain = (
         await asyncio.gather(
             _finnhub_enrichment(),
             _compute_stock_technicals(top_symbols),
@@ -1094,6 +1094,7 @@ async def compile_market_brief() -> dict:
             _fetch_crypto_trending(),
             _fetch_options_flow(),
             _fetch_yield_curve(),
+            _fetch_btc_onchain(),
         )
     )
 
@@ -1152,6 +1153,7 @@ async def compile_market_brief() -> dict:
         "crypto_trending": crypto_trending,
         "options_flow": options_flow,
         "yield_curve": yield_curve,
+        "btc_onchain": btc_onchain,
     }
 
     # Resilience fallbacks — if a transient fetch failure produces null data,
@@ -1274,6 +1276,150 @@ async def _fetch_options_flow() -> dict | None:
     except Exception as e:
         print(f"[OPTIONS_FLOW] VIX fetch failed: {type(e).__name__}: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# On-Chain & Derivatives: BTC network and futures-market metrics
+# All sources are free, no auth required
+# ---------------------------------------------------------------------------
+
+def _classify_mvrv_z(z: float) -> str:
+    """MVRV-Z historical regime classification.
+    Below 0 has been every BTC cycle bottom; above 7 has been every top."""
+    if z >= 7: return "TOP_ZONE"
+    if z >= 4: return "OVERHEATED"
+    if z >= 2: return "BULL_PHASE"
+    if z >= 0: return "ACCUMULATION_ZONE"
+    return "DEEP_BOTTOM"
+
+
+def _classify_nupl(n: float) -> str:
+    """NUPL historical regime classification."""
+    if n >= 0.75: return "EUPHORIA"
+    if n >= 0.50: return "BELIEF"
+    if n >= 0.25: return "OPTIMISM"
+    if n >= 0: return "HOPE_FEAR"
+    return "CAPITULATION"
+
+
+def _classify_puell(p: float) -> str:
+    """Puell Multiple — miner economics. Below 0.5 = miner capitulation,
+    historically a cycle bottom buy signal."""
+    if p >= 4: return "MINER_TOP"
+    if p >= 2: return "MINER_PROFITS_HIGH"
+    if p >= 1: return "HEALTHY"
+    if p >= 0.5: return "MINER_PRESSURE"
+    return "MINER_CAPITULATION"
+
+
+async def _fetch_btc_onchain() -> dict | None:
+    """Fetch BTC on-chain + derivatives metrics from free public APIs.
+    Returns a dict with metric values, regime classifications, and a
+    one-line interpretation summary suitable for trader prompts.
+    Sources:
+      - bitcoin-data.com (MVRV-Z, NUPL, realized price, Puell, active addrs)
+      - mempool.space (hash rate)
+      - Binance Futures API (funding rate, long/short ratio)
+    Graceful degradation: any failed fetch is omitted from result."""
+    result: dict = {}
+
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "PaperTradeBot/1.0"}) as client:
+        # bitcoin-data.com endpoints — five metrics, one client
+        bdc_metrics = [
+            ("mvrv-zscore", "mvrvZscore", "mvrv_z"),
+            ("nupl", "nupl", "nupl"),
+            ("realized-price", "realizedPrice", "realized_price"),
+            ("puell-multiple", "puellMultiple", "puell_multiple"),
+            ("active-addresses", "activeAddresses", "active_addresses"),
+        ]
+        for endpoint, payload_key, result_key in bdc_metrics:
+            try:
+                resp = await client.get(f"https://bitcoin-data.com/v1/{endpoint}/last")
+                if resp.status_code == 200:
+                    val = resp.json().get(payload_key)
+                    if val is not None:
+                        result[result_key] = float(val)
+            except Exception as e:
+                print(f"[ONCHAIN] bitcoin-data.com {endpoint} failed: {e}")
+
+        # mempool.space hash rate
+        try:
+            resp = await client.get("https://mempool.space/api/v1/mining/hashrate/1m")
+            if resp.status_code == 200:
+                data = resp.json()
+                hr = data.get("currentHashrate")
+                if hr:
+                    # convert hashes/sec -> EH/s for readability
+                    result["hash_rate_eh"] = round(float(hr) / 1e18, 1)
+        except Exception as e:
+            print(f"[ONCHAIN] mempool.space hash rate failed: {e}")
+
+        # Binance Futures funding rate
+        try:
+            resp = await client.get("https://fapi.binance.com/fapi/v1/premiumIndex",
+                                    params={"symbol": "BTCUSDT"})
+            if resp.status_code == 200:
+                fr = resp.json().get("lastFundingRate")
+                if fr is not None:
+                    # Binance funding is per 8h; annualize for context
+                    result["funding_rate_8h"] = round(float(fr) * 100, 4)
+                    result["funding_rate_apr"] = round(float(fr) * 100 * 3 * 365, 2)
+        except Exception as e:
+            print(f"[ONCHAIN] Binance funding failed: {e}")
+
+        # Binance long/short ratio
+        try:
+            resp = await client.get("https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
+                                    params={"symbol": "BTCUSDT", "period": "1d", "limit": 1})
+            if resp.status_code == 200:
+                data = resp.json()
+                if data:
+                    result["long_short_ratio"] = round(float(data[0].get("longShortRatio", 0)), 2)
+                    result["long_account_pct"] = round(float(data[0].get("longAccount", 0)) * 100, 1)
+        except Exception as e:
+            print(f"[ONCHAIN] Binance long/short failed: {e}")
+
+    if not result:
+        return None
+
+    # Regime classifications
+    if "mvrv_z" in result:
+        result["mvrv_z_regime"] = _classify_mvrv_z(result["mvrv_z"])
+    if "nupl" in result:
+        result["nupl_regime"] = _classify_nupl(result["nupl"])
+    if "puell_multiple" in result:
+        result["puell_regime"] = _classify_puell(result["puell_multiple"])
+
+    # Derivatives interpretation
+    if "funding_rate_8h" in result:
+        fr = result["funding_rate_8h"]
+        if fr > 0.05: result["funding_signal"] = "LONGS_OVERHEATED"
+        elif fr > 0.01: result["funding_signal"] = "MILDLY_LONG_BIASED"
+        elif fr > -0.01: result["funding_signal"] = "NEUTRAL"
+        elif fr > -0.05: result["funding_signal"] = "MILDLY_SHORT_BIASED"
+        else: result["funding_signal"] = "SHORTS_OVERHEATED"
+    if "long_short_ratio" in result:
+        r = result["long_short_ratio"]
+        if r >= 2.5: result["positioning_signal"] = "LONG_CROWDED"
+        elif r >= 1.5: result["positioning_signal"] = "LONG_BIASED"
+        elif r >= 0.7: result["positioning_signal"] = "BALANCED"
+        elif r >= 0.4: result["positioning_signal"] = "SHORT_BIASED"
+        else: result["positioning_signal"] = "SHORT_CROWDED"
+
+    # Cohort signal: how many of the long-term valuation metrics are in
+    # accumulation / capitulation zones? More than 2 = strong contrarian buy.
+    bottom_signals = sum(1 for k in ("mvrv_z_regime", "nupl_regime", "puell_regime")
+                         if result.get(k) in ("ACCUMULATION_ZONE", "DEEP_BOTTOM",
+                                              "HOPE_FEAR", "CAPITULATION",
+                                              "MINER_PRESSURE", "MINER_CAPITULATION"))
+    if bottom_signals >= 2:
+        result["cohort_signal"] = "CONTRARIAN_BUY_ZONE"
+    elif bottom_signals == 0:
+        result["cohort_signal"] = "TOP_OR_NEUTRAL"
+    else:
+        result["cohort_signal"] = "MIXED"
+
+    return result
 
 
 # ---------------------------------------------------------------------------
