@@ -130,6 +130,13 @@ RAG_MODULES: dict[str, dict] = {
         "icon": "users",
         "color": "indigo",
     },
+    "cross_asset": {
+        "label": "Cross-Asset Macro",
+        "description": "DXY (US Dollar Index), gold, 10Y real yields, breakeven inflation, and WTI crude — the four macro channels that drive risk-asset valuations.",
+        "always_included": False,
+        "icon": "globe",
+        "color": "cyan",
+    },
 }
 
 
@@ -153,6 +160,7 @@ MODULE_KEYWORDS: dict[str, list[str]] = {
     "expert_opinion": ["analyst opinion", "expert", "digest", "consensus view", "independent analyst", "wolf street", "bankless", "messari", "calculated risk"],
     "btc_onchain": ["mvrv", "nupl", "puell", "realized price", "hash rate", "active addresses", "funding rate", "long/short", "long short ratio", "on-chain", "miner capitulation", "contrarian buy zone"],
     "fleet_conviction": ["fleet", "peer fleet", "consensus pick", "fleet flow", "fade the consensus", "the herd", "the fleet is", "fleet conviction", "controversial pick", "consensus accumulation", "consensus distribution"],
+    "cross_asset": ["dxy", "dollar index", "real yield", "tips yield", "breakeven", "10y real", "gold price", "wti", "crude oil", "dollar strength", "dollar weakness", "macro headwind", "macro tailwind", "risk regime"],
 }
 
 
@@ -1717,6 +1725,90 @@ def _format_fleet_conviction(fleet: dict | None, invert: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _format_cross_asset(brief: dict) -> str:
+    """Format DXY, gold, real yields, breakevens, WTI with a regime synthesis line.
+    These are the four macro channels that drive risk-asset valuations:
+    - DXY ↑ = headwind for crypto + EM equities (denominated in $)
+    - Real yields ↑ = headwind for gold + duration + growth equities
+    - Breakevens ↑ = tailwind for cyclicals + commodities
+    - WTI = supply/demand inflation pulse; affects energy + transport
+    """
+    ca = brief.get("cross_asset")
+    if not ca or not ca.get("series"):
+        return ""
+
+    series = ca["series"]
+    dxy_signal = ca.get("dxy_signal", "?")
+    ry_signal = ca.get("real_yield_signal", "?")
+    inf_signal = ca.get("inflation_signal", "?")
+    risk_regime = ca.get("risk_regime", "?")
+
+    lines = ["### Cross-Asset Macro"]
+
+    # QUOTABLE line with the highest-signal numbers
+    quotable_parts = []
+    if "DXY_broad" in series:
+        d = series["DXY_broad"]
+        quotable_parts.append(f"DXY {d['value']:.1f} ({d['change_5d_pct']:+.1f}% 5d, {dxy_signal})")
+    if "Real_10Y" in series:
+        r = series["Real_10Y"]
+        quotable_parts.append(f"10Y real {r['value']:.2f}% ({r['change_5d_bps']:+.0f}bps 5d)")
+    if "Breakeven_10Y" in series:
+        b = series["Breakeven_10Y"]
+        quotable_parts.append(f"breakeven {b['value']:.2f}% ({inf_signal})")
+    if quotable_parts:
+        lines.append(f"QUOTABLE: {' | '.join(quotable_parts)} — risk regime: {risk_regime}.")
+        lines.append("")
+
+    lines.append(
+        "NOTE: Four macro channels drive risk-asset pricing. DXY rising = headwind "
+        "for crypto and non-US equities. 10Y real yield = opportunity cost of holding "
+        "gold and growth stocks. Breakeven = inflation expectations. WTI = energy "
+        "and transport input cost."
+    )
+
+    # Detail per series
+    lines.append("")
+    lines.append("CURRENT LEVELS (5-day change in parens):")
+    if "DXY_broad" in series:
+        d = series["DXY_broad"]
+        lines.append(f"  DXY (broad USD): {d['value']:.2f}  ({d['change_5d_pct']:+.2f}% 5d)  → {dxy_signal}")
+    if "Real_10Y" in series:
+        r = series["Real_10Y"]
+        lines.append(f"  10Y real yield: {r['value']:.2f}%  ({r['change_5d_bps']:+.0f} bps 5d)  → {ry_signal}")
+    if "Breakeven_10Y" in series:
+        b = series["Breakeven_10Y"]
+        lines.append(f"  10Y breakeven inflation: {b['value']:.2f}%  ({b['change_5d_bps']:+.0f} bps 5d)  → {inf_signal}")
+    if "Gold" in series:
+        g = series["Gold"]
+        lines.append(f"  Gold (GC futures): ${g['value']:,.0f}/oz  ({g['change_5d_pct']:+.2f}% 5d)")
+    if "WTI" in series:
+        w = series["WTI"]
+        lines.append(f"  WTI crude: ${w['value']:.2f}/bbl  ({w['change_5d_pct']:+.2f}% 5d)")
+
+    # Synthesis
+    lines.append("")
+    if risk_regime == "TAILWIND":
+        lines.append(
+            "  SYNTHESIS: Macro is supportive — weakening dollar AND falling/stable real "
+            "yields AND anchored inflation. Risk assets (BTC, growth equities, EM) get "
+            "tailwind. Use this as corroboration when adding risk."
+        )
+    elif risk_regime == "HEADWIND":
+        lines.append(
+            "  SYNTHESIS: Macro is restrictive — strengthening dollar AND rising real yields. "
+            "Risk assets face direct headwind through valuation channel. Size accordingly: "
+            "avoid stretched valuations, lean into beta-light names, hold dry powder."
+        )
+    else:
+        lines.append(
+            "  SYNTHESIS: Macro signals are mixed — no clean directional read. Don't "
+            "over-weight macro framing; lean on bottom-up signals from your other modules."
+        )
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Formatter dispatch table
 # ---------------------------------------------------------------------------
@@ -1743,6 +1835,7 @@ _MODULE_FORMATTERS = {
     "fleet_conviction": lambda ctx: _format_fleet_conviction(
         ctx.get("fleet_signals"), invert=ctx.get("invert", False)
     ),
+    "cross_asset": lambda ctx: _format_cross_asset(ctx["brief"]),
 }
 
 

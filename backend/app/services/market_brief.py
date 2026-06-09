@@ -1083,7 +1083,7 @@ async def compile_market_brief() -> dict:
     # Social sentiment uses StockTwits (separate API) — safe to run in parallel
     social_symbols = [m["symbol"] for m in (movers_up[:5] + movers_down[:5])]
 
-    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending, options_flow, yield_curve, btc_onchain = (
+    (fundamentals, analyst_recs, earnings_calendar, economic_calendar, insider_transactions), stock_technicals, crypto_market, social_sentiment, crypto_global, crypto_categories, crypto_trending, options_flow, yield_curve, btc_onchain, cross_asset = (
         await asyncio.gather(
             _finnhub_enrichment(),
             _compute_stock_technicals(top_symbols),
@@ -1095,6 +1095,7 @@ async def compile_market_brief() -> dict:
             _fetch_options_flow(),
             _fetch_yield_curve(),
             _fetch_btc_onchain(),
+            _fetch_cross_asset(),
         )
     )
 
@@ -1154,6 +1155,7 @@ async def compile_market_brief() -> dict:
         "options_flow": options_flow,
         "yield_curve": yield_curve,
         "btc_onchain": btc_onchain,
+        "cross_asset": cross_asset,
     }
 
     # Resilience fallbacks — if a transient fetch failure produces null data,
@@ -1608,6 +1610,178 @@ async def _fetch_treasury_yields_yahoo() -> dict:
     except Exception as e:
         print(f"[YIELD_CURVE_YAHOO] Fallback fetch failed: {type(e).__name__}: {e}")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cross-Asset Signals: DXY, gold, real yields, breakevens, WTI (FRED)
+# ---------------------------------------------------------------------------
+
+# These macro indicators move risk assets through clear channels:
+# - DXY rises → crypto and gold weaken (denominated in $)
+# - Real yields rise → growth stocks and gold weaken (opportunity cost goes up)
+# - Breakevens rise → cyclical names and commodities benefit
+# - WTI rises → energy outperforms, transport underperforms
+
+FRED_CROSS_ASSET_SERIES = {
+    "DTWEXBGS": "DXY_broad",      # Trade-weighted USD index (broad, daily)
+    "DFII10": "Real_10Y",         # 10Y inflation-indexed Treasury yield (real yield)
+    "T10YIE": "Breakeven_10Y",    # 10Y breakeven inflation rate (10Y nominal - 10Y TIPS)
+    "DCOILWTICO": "WTI",          # WTI crude oil spot, USD/barrel
+}
+# Gold pulled separately via Yahoo (FRED's London Bullion series discontinued).
+
+
+def _classify_dxy(level: float, change_pct: float) -> str:
+    """Categorize current DXY behavior into a regime label."""
+    if change_pct >= 0.5:
+        return "DOLLAR_STRENGTHENING"   # risk-off pressure on crypto + EM
+    if change_pct <= -0.5:
+        return "DOLLAR_WEAKENING"       # tailwind for crypto + commodities
+    return "DOLLAR_STABLE"
+
+
+def _classify_real_yield(rate: float, change_bps: float) -> str:
+    if rate < 0:
+        return "NEGATIVE_REAL_YIELDS"   # bullish gold + duration + growth equities
+    if rate > 2.5:
+        return "RESTRICTIVE_REAL_YIELDS"
+    return "POSITIVE_REAL_YIELDS"
+
+
+def _classify_breakeven(rate: float) -> str:
+    if rate < 1.8:
+        return "DISINFLATION"
+    if rate > 2.6:
+        return "INFLATION_RISING"
+    return "INFLATION_ANCHORED"
+
+
+async def _fetch_cross_asset() -> dict | None:
+    """Fetch cross-asset macro signals from FRED.
+    Returns the latest level plus 5-day change for each series, with
+    regime labels for DXY, real yields, and inflation expectations."""
+    settings = get_settings()
+    fred_key = getattr(settings, "fred_api_key", "")
+    if not fred_key:
+        return None
+
+    results: dict = {}
+
+    async def _fetch_one(series_id: str, label: str):
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(
+                    f"{FRED_BASE}/series/observations",
+                    params={
+                        "series_id": series_id,
+                        "api_key": fred_key,
+                        "file_type": "json",
+                        "sort_order": "desc",
+                        "limit": 10,
+                    },
+                )
+                if resp.status_code != 200:
+                    print(f"[CROSS_ASSET] {series_id} HTTP {resp.status_code}")
+                    return
+                body = resp.json()
+                obs = body.get("observations", [])
+                # Pick first 2 non-missing values: today + ~5 trading days ago
+                valid = [(o["date"], float(o["value"]))
+                         for o in obs if o.get("value") not in (None, ".", "")]
+                if not valid:
+                    return
+                latest_date, latest_val = valid[0]
+                if len(valid) >= 5:
+                    _, prior_val = valid[5] if len(valid) > 5 else valid[-1]
+                else:
+                    prior_val = valid[-1][1]
+                change_pct = ((latest_val - prior_val) / prior_val) * 100 if prior_val else 0.0
+                results[label] = {
+                    "value": round(latest_val, 4),
+                    "date": latest_date,
+                    "change_5d_pct": round(change_pct, 3),
+                    "change_5d_bps": round((latest_val - prior_val) * 100, 1),
+                }
+        except Exception as e:
+            print(f"[CROSS_ASSET] {series_id} failed: {type(e).__name__}: {e}")
+
+    async def _fetch_gold_yahoo():
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    "https://query1.finance.yahoo.com/v8/finance/chart/GC%3DF",
+                    params={"range": "10d", "interval": "1d"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code != 200:
+                    print(f"[CROSS_ASSET] Yahoo gold HTTP {resp.status_code}")
+                    return
+                data = resp.json()
+                r = data.get("chart", {}).get("result", [{}])[0]
+                closes = r.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                ts = r.get("timestamp", [])
+                valid = [(t, c) for t, c in zip(ts, closes) if c is not None]
+                if len(valid) < 2:
+                    return
+                _, latest = valid[-1]
+                # 5 trading days back, or earliest if shorter
+                prior = valid[-6][1] if len(valid) >= 6 else valid[0][1]
+                from datetime import datetime as _dt, timezone as _tz
+                latest_date = _dt.fromtimestamp(valid[-1][0], tz=_tz.utc).date().isoformat()
+                change_pct = ((latest - prior) / prior * 100) if prior else 0.0
+                results["Gold"] = {
+                    "value": round(latest, 2),
+                    "date": latest_date,
+                    "change_5d_pct": round(change_pct, 3),
+                    "change_5d_bps": round((latest - prior), 2),
+                }
+        except Exception as e:
+            print(f"[CROSS_ASSET] Yahoo gold failed: {type(e).__name__}: {e}")
+
+    await asyncio.gather(
+        *[_fetch_one(sid, label) for sid, label in FRED_CROSS_ASSET_SERIES.items()],
+        _fetch_gold_yahoo(),
+    )
+
+    if not results:
+        return None
+
+    out: dict = {"series": results}
+
+    # Regime labels — only if data is present
+    dxy = results.get("DXY_broad")
+    if dxy:
+        out["dxy_signal"] = _classify_dxy(dxy["value"], dxy["change_5d_pct"])
+
+    ry = results.get("Real_10Y")
+    if ry:
+        out["real_yield_signal"] = _classify_real_yield(ry["value"], ry["change_5d_bps"])
+
+    be = results.get("Breakeven_10Y")
+    if be:
+        out["inflation_signal"] = _classify_breakeven(be["value"])
+
+    # Cross-asset synthesis: a quick "risk asset tailwind/headwind" call
+    tailwinds = 0
+    headwinds = 0
+    if dxy and dxy["change_5d_pct"] <= -0.3:
+        tailwinds += 1
+    elif dxy and dxy["change_5d_pct"] >= 0.3:
+        headwinds += 1
+    if ry and ry["change_5d_bps"] <= -10:
+        tailwinds += 1
+    elif ry and ry["change_5d_bps"] >= 10:
+        headwinds += 1
+    if be and 1.8 <= be["value"] <= 2.6:
+        tailwinds += 1   # anchored inflation = clean macro for risk
+    if tailwinds >= 2 and headwinds == 0:
+        out["risk_regime"] = "TAILWIND"
+    elif headwinds >= 2 and tailwinds == 0:
+        out["risk_regime"] = "HEADWIND"
+    else:
+        out["risk_regime"] = "MIXED"
+
+    return out
 
 
 async def get_latest_brief() -> dict | None:
