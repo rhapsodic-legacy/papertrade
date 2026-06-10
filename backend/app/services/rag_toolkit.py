@@ -1757,7 +1757,11 @@ def _format_cross_asset(brief: dict) -> str:
         b = series["Breakeven_10Y"]
         quotable_parts.append(f"breakeven {b['value']:.2f}% ({inf_signal})")
     if quotable_parts:
-        lines.append(f"QUOTABLE: {' | '.join(quotable_parts)} — risk regime: {risk_regime}.")
+        lines.append(
+            f"QUOTABLE: {' | '.join(quotable_parts)} — risk regime: {risk_regime}. "
+            f"Cite these numbers directly in your reasoning whenever you trade crypto, "
+            f"growth equities, gold-sensitive names, or energy. They drive valuation."
+        )
         lines.append("")
 
     lines.append(
@@ -1801,10 +1805,36 @@ def _format_cross_asset(brief: dict) -> str:
             "avoid stretched valuations, lean into beta-light names, hold dry powder."
         )
     else:
-        lines.append(
-            "  SYNTHESIS: Macro signals are mixed — no clean directional read. Don't "
-            "over-weight macro framing; lean on bottom-up signals from your other modules."
-        )
+        # MIXED — most common state. Don't tell the model to ignore macro;
+        # give it specific direction by tilt of the individual channels.
+        tilts = []
+        dxy_s = series.get("DXY_broad")
+        if dxy_s and dxy_s["change_5d_pct"] >= 0.3:
+            tilts.append("dollar is strengthening → headwind for BTC/ETH and EM names")
+        elif dxy_s and dxy_s["change_5d_pct"] <= -0.3:
+            tilts.append("dollar is weakening → tailwind for BTC/ETH and gold")
+        ry_s = series.get("Real_10Y")
+        if ry_s and ry_s["change_5d_bps"] >= 10:
+            tilts.append("real yields rising → pressure on growth equities and duration")
+        elif ry_s and ry_s["change_5d_bps"] <= -10:
+            tilts.append("real yields falling → tailwind for growth equities and gold")
+        wti_s = series.get("WTI")
+        if wti_s and abs(wti_s["change_5d_pct"]) >= 3:
+            dir_word = "up" if wti_s["change_5d_pct"] > 0 else "down"
+            tilts.append(f"WTI {dir_word} {abs(wti_s['change_5d_pct']):.1f}% → energy names {'lift' if wti_s['change_5d_pct']>0 else 'drag'}")
+        if tilts:
+            lines.append("  SYNTHESIS: Composite regime mixed, but the active tilts are:")
+            for t in tilts:
+                lines.append(f"    - {t}")
+            lines.append(
+                "  Weight these against your bottom-up signals — they don't override but "
+                "they explain why a position is moving."
+            )
+        else:
+            lines.append(
+                "  SYNTHESIS: Macro is quiet — no channel showing material 5-day move. "
+                "Bottom-up signals dominate; macro is non-contributing today."
+            )
 
     return "\n".join(lines)
 
