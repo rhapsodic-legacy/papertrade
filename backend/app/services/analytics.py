@@ -8,7 +8,7 @@ transaction and snapshot data.
 import math
 from datetime import date, timedelta
 
-from app.services.supabase_client import get_supabase_admin
+from app.services.supabase_client import get_supabase_admin, fetch_all_rows
 from app.services.market_data import STOCK_SECTORS, get_quote
 
 
@@ -42,29 +42,30 @@ def _clean_display_name(name: str) -> str:
     return name
 
 
+# With 5k+ AI trades, any unbounded .execute() reads only the oldest 1000
+# rows — every full-history fetch in this module must paginate.
+_fetch_all_rows = fetch_all_rows
+
+
 async def get_trader_analytics(trader_id: str) -> dict:
     """Compute full analytics for a single trader."""
     db = get_supabase_admin()
 
     # Fetch all transactions for this trader
-    tx_resp = (
+    transactions = _fetch_all_rows(
         db.table("transactions")
         .select("symbol, asset_type, side, quantity, price, total, created_at")
         .eq("user_id", trader_id)
         .order("created_at", desc=False)
-        .execute()
     )
-    transactions = tx_resp.data
 
     # Fetch snapshots
-    snap_resp = (
+    snapshots = _fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("snapshot_date, total_value")
         .eq("user_id", trader_id)
         .order("snapshot_date", desc=False)
-        .execute()
     )
-    snapshots = snap_resp.data
 
     # Fetch current positions for sector exposure
     pos_resp = (
@@ -321,30 +322,28 @@ async def get_ai_comparison() -> dict:
     trader_ids = [p["id"] for p in profiles_resp.data]
 
     # Batch fetch all transactions
-    tx_resp = (
+    tx_rows = _fetch_all_rows(
         db.table("transactions")
         .select("user_id, symbol, asset_type, side, quantity, price, total, created_at")
         .in_("user_id", trader_ids)
         .order("created_at", desc=False)
-        .execute()
     )
 
     # Batch fetch all snapshots
-    snap_resp = (
+    snap_rows = _fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", trader_ids)
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     # Group by user
     tx_by_user: dict[str, list] = {}
-    for tx in tx_resp.data:
+    for tx in tx_rows:
         tx_by_user.setdefault(tx["user_id"], []).append(tx)
 
     snap_by_user: dict[str, list] = {}
-    for s in snap_resp.data:
+    for s in snap_rows:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     # Import personality mapping
@@ -436,31 +435,29 @@ async def get_model_deep_dive(days: int = 7) -> dict:
     trader_ids = [p["id"] for p in profiles_resp.data]
 
     # Snapshots in the window
-    snap_resp = (
+    snap_rows = _fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", trader_ids)
         .gte("snapshot_date", cutoff)
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     snap_by_user: dict[str, list] = {}
-    for s in snap_resp.data:
+    for s in snap_rows:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     # Trades in the window
-    tx_resp = (
+    tx_rows = _fetch_all_rows(
         db.table("transactions")
         .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning")
         .in_("user_id", trader_ids)
         .gte("created_at", f"{cutoff}T00:00:00")
         .order("created_at", desc=False)
-        .execute()
     )
 
     tx_by_user: dict[str, list] = {}
-    for tx in tx_resp.data:
+    for tx in tx_rows:
         tx_by_user.setdefault(tx["user_id"], []).append(tx)
 
     # Build per-trader results
@@ -873,26 +870,24 @@ async def _get_ai_averages() -> dict:
 
     trader_ids = [p["id"] for p in profiles_resp.data]
 
-    tx_resp = (
+    tx_rows = _fetch_all_rows(
         db.table("transactions")
         .select("user_id, symbol, side, quantity, price")
         .in_("user_id", trader_ids)
         .order("created_at", desc=False)
-        .execute()
     )
-    snap_resp = (
+    snap_rows = _fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", trader_ids)
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     tx_by_user: dict[str, list] = {}
-    for tx in tx_resp.data:
+    for tx in tx_rows:
         tx_by_user.setdefault(tx["user_id"], []).append(tx)
     snap_by_user: dict[str, list] = {}
-    for s in snap_resp.data:
+    for s in snap_rows:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     returns, sharpes, win_rates, drawdowns, profit_factors = [], [], [], [], []
@@ -942,12 +937,12 @@ async def get_reflection_trends(trader_id: str | None = None) -> dict:
     if trader_id:
         query = query.eq("user_id", trader_id)
 
-    resp = query.execute()
-    if not resp.data:
+    reflection_rows = _fetch_all_rows(query)
+    if not reflection_rows:
         return {"trends": [], "by_trader": {}, "summary": {}}
 
     # Get personality mapping
-    user_ids = list({r["user_id"] for r in resp.data})
+    user_ids = list({r["user_id"] for r in reflection_rows})
     profiles_resp = (
         db.table("profiles")
         .select("id, display_name, ai_model, is_ai")
@@ -974,7 +969,7 @@ async def get_reflection_trends(trader_id: str | None = None) -> dict:
     weekly: dict[str, list[float]] = {}  # "YYYY-WW" -> scores
     by_trader: dict[str, list[dict]] = {}  # user_id -> reflections
 
-    for r in resp.data:
+    for r in reflection_rows:
         score = float(r["outcome_score"])
         ref_date = r["reflected_at"][:10]
 
@@ -1020,7 +1015,7 @@ async def get_reflection_trends(trader_id: str | None = None) -> dict:
         }
 
     # Overall summary
-    all_scores = [float(r["outcome_score"]) for r in resp.data]
+    all_scores = [float(r["outcome_score"]) for r in reflection_rows]
     improving_count = sum(1 for t in trader_summaries.values() if t.get("improving") is True)
     total_with_data = sum(1 for t in trader_summaries.values() if t.get("improving") is not None)
 
@@ -1037,36 +1032,41 @@ async def get_reflection_trends(trader_id: str | None = None) -> dict:
     }
 
 
-async def get_module_attribution(trader_id: str | None = None) -> dict:
+async def get_module_attribution(trader_id: str | None = None, cite_days: int = 14) -> dict:
     """Compute win rate and P&L broken down by which toolkit modules were active.
 
     If trader_id is provided, scopes to one trader. Otherwise, all AI traders.
     Uses the modules_used JSON field on transactions to attribute outcomes.
+
+    Also computes a recent cite-rate per module (last cite_days days): of the
+    trades made by traders whose toolkit includes the module, what fraction
+    actually cited it? Modules stuck near zero are surfaced in low_adoption —
+    cross_asset sat at 0 citations for two pipeline runs before anyone noticed
+    because uncited modules never appeared in this report at all.
     """
     import json
 
     db = get_supabase_admin()
 
+    profiles_query = db.table("profiles").select("id, display_name")
     if trader_id:
-        trader_ids = [trader_id]
+        profiles_query = profiles_query.eq("id", trader_id)
     else:
-        profiles_resp = (
-            db.table("profiles").select("id").eq("is_ai", True).execute()
-        )
-        trader_ids = [p["id"] for p in profiles_resp.data]
+        profiles_query = profiles_query.eq("is_ai", True)
+    profiles_resp = profiles_query.execute()
+    trader_ids = [p["id"] for p in profiles_resp.data]
 
     if not trader_ids:
         return {"modules": {}, "total_trades_analyzed": 0}
 
-    tx_resp = (
+    tx_rows = _fetch_all_rows(
         db.table("transactions")
         .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, modules_used")
         .in_("user_id", trader_ids)
         .order("created_at", desc=False)
-        .execute()
     )
 
-    if not tx_resp.data:
+    if not tx_rows:
         return {"modules": {}, "total_trades_analyzed": 0}
 
     # Replay positions to compute per-sell P&L, then attribute to modules
@@ -1074,7 +1074,7 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
     # Each sell gets: pnl, modules list
     sell_records: list[dict] = []
 
-    for tx in tx_resp.data:
+    for tx in tx_rows:
         uid = tx["user_id"]
         sym = tx["symbol"]
         qty = float(tx["quantity"])
@@ -1111,7 +1111,7 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
     # Track buys with their modules for entry quality analysis
     buy_records: list[dict] = []
     positions2: dict[str, dict[str, dict]] = {}
-    for tx in tx_resp.data:
+    for tx in tx_rows:
         uid = tx["user_id"]
         sym = tx["symbol"]
         qty = float(tx["quantity"])
@@ -1253,6 +1253,89 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
             "combined_pnl": round(stats["sell_total_pnl"] + full_buy_pnl, 2),
         }
 
+    # --- Cite-rate: did traders who HAVE a module actually use it recently? ---
+    from datetime import datetime, timedelta, timezone
+    from app.services.ai_trader import PERSONALITIES
+
+    def _personality_for(display_name: str) -> str | None:
+        # Longest-name match: "Crypto Chad New (...)" must resolve to
+        # crypto_chad_swing, not crypto_chad, despite the substring overlap.
+        best = None
+        for pkey, pinfo in PERSONALITIES.items():
+            if pinfo["name"] in display_name:
+                if best is None or len(pinfo["name"]) > len(PERSONALITIES[best]["name"]):
+                    best = pkey
+        return best
+
+    trader_personality = {
+        p["id"]: _personality_for(p.get("display_name") or "")
+        for p in profiles_resp.data
+    }
+    toolkit_modules = {
+        pkey: {t["module"] for t in pinfo.get("toolkit", [])}
+        for pkey, pinfo in PERSONALITIES.items()
+    }
+
+    cite_cutoff = datetime.now(timezone.utc) - timedelta(days=cite_days)
+    cite_counts: dict[str, int] = {}
+    eligible_counts: dict[str, int] = {}
+    for tx in tx_rows:
+        try:
+            ts = datetime.fromisoformat(tx["created_at"].replace("Z", "+00:00"))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if ts < cite_cutoff:
+            continue
+        available = toolkit_modules.get(trader_personality.get(tx["user_id"]), set())
+        cited = []
+        if tx.get("modules_used"):
+            try:
+                cited = json.loads(tx["modules_used"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        for mod in available:
+            eligible_counts[mod] = eligible_counts.get(mod, 0) + 1
+            if mod in cited:
+                cite_counts[mod] = cite_counts.get(mod, 0) + 1
+
+    # A module nobody ever cited has no attribution stats — add a zeroed
+    # entry so it shows up in the report instead of being invisible.
+    for mod in eligible_counts:
+        if mod not in modules_result:
+            meta = RAG_MODULES.get(mod, {})
+            modules_result[mod] = {
+                "label": meta.get("label", mod),
+                "color": meta.get("color", "#888"),
+                "sell_win_rate": 0, "sell_trades": 0, "sell_total_pnl": 0.0,
+                "buy_win_rate": 0, "buy_trades": 0, "buy_total_pnl": 0.0,
+                "open_buy_win_rate": 0, "open_buy_trades": 0, "open_buy_pnl_mtm": 0.0,
+                "full_buy_win_rate": 0, "full_buy_trades": 0, "full_buy_pnl": 0.0,
+                "combined_win_rate": 0, "combined_pnl": 0.0,
+            }
+
+    for mod, entry in modules_result.items():
+        eligible = eligible_counts.get(mod, 0)
+        cites = cite_counts.get(mod, 0)
+        entry["cite_count_recent"] = cites
+        entry["eligible_trades_recent"] = eligible
+        entry["cite_rate_recent"] = round(cites / eligible * 100, 1) if eligible else None
+
+    low_adoption = sorted(
+        (
+            {
+                "module": mod,
+                "label": entry["label"],
+                "cite_rate_recent": entry["cite_rate_recent"],
+                "cite_count_recent": entry["cite_count_recent"],
+                "eligible_trades_recent": entry["eligible_trades_recent"],
+            }
+            for mod, entry in modules_result.items()
+            if entry["eligible_trades_recent"] >= 20
+            and (entry["cite_rate_recent"] or 0) < 5.0
+        ),
+        key=lambda m: m["cite_rate_recent"] or 0,
+    )
+
     # Sort by combined P&L (now includes mark-to-market on open positions)
     modules_result = dict(
         sorted(modules_result.items(), key=lambda x: x[1]["combined_pnl"], reverse=True)
@@ -1263,6 +1346,8 @@ async def get_module_attribution(trader_id: str | None = None) -> dict:
         "total_sells_analyzed": len(sell_records),
         "total_buys_analyzed": len(buy_records),
         "total_open_buys_analyzed": len(open_buy_records),
+        "cite_window_days": cite_days,
+        "low_adoption": low_adoption,
     }
 
 
@@ -1416,19 +1501,16 @@ async def get_convergence_quality(
 
     # Fetch trades in window
     cutoff = (date.today() - timedelta(days=days)).isoformat()
-    tx_resp = (
+    trades = _fetch_all_rows(
         db.table("transactions")
         .select("id, user_id, symbol, asset_type, side, quantity, price, reasoning, modules_used, created_at")
         .in_("user_id", ai_ids)
         .gte("created_at", f"{cutoff}T00:00:00")
         .order("created_at", desc=False)
-        .execute()
     )
 
-    if not tx_resp.data:
+    if not trades:
         return {"total_trades_analyzed": 0, "convergence": {}, "independent": {}}
-
-    trades = tx_resp.data
 
     # --- Step 1: Tag convergence vs independent ---
     # Group by (date, symbol, side)
@@ -1738,13 +1820,13 @@ async def get_trade_reasoning(
     }
     ai_ids = list(profile_map.keys())
 
-    # Fetch trades
+    # Fetch trades. The old .limit(2000) never worked — PostgREST caps a
+    # single response at 1000 rows, so page instead.
     query = (
         db.table("transactions")
         .select("user_id, symbol, asset_type, side, quantity, price, total, reasoning, modules_used, created_at")
         .gte("created_at", f"{cutoff}T00:00:00")
         .order("created_at", desc=True)
-        .limit(2000)
     )
     if trader_id:
         query = query.eq("user_id", trader_id)
@@ -1753,8 +1835,7 @@ async def get_trade_reasoning(
     if symbol:
         query = query.eq("symbol", symbol.upper())
 
-    resp = query.execute()
-    trades = resp.data or []
+    trades = _fetch_all_rows(query, max_rows=2000)
 
     # Group by date
     import json as _json

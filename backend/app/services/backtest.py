@@ -8,7 +8,7 @@ Compares AI trader performance against:
 
 from datetime import date, timedelta
 
-from app.services.supabase_client import get_supabase_admin
+from app.services.supabase_client import get_supabase_admin, fetch_all_rows
 from app.services.market_data import get_stock_candles, STOCK_SECTORS
 from app.services.ai_trader import PERSONALITIES
 from app.services.analytics import _model_label, _clean_display_name
@@ -56,19 +56,18 @@ async def get_benchmark_comparison(days: int = 90) -> dict:
     trader_ids = [p["id"] for p in profiles_resp.data]
 
     # Fetch all snapshots in date range
-    snap_resp = (
+    snap_rows = fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", trader_ids)
         .gte("snapshot_date", start_date.isoformat())
         .lte("snapshot_date", today.isoformat())
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     # Group snapshots by user
     snap_by_user: dict[str, list] = {}
-    for s in snap_resp.data:
+    for s in snap_rows:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     # Compute each trader's return series
@@ -165,16 +164,15 @@ async def get_enhancement_comparison() -> dict:
     trader_ids = [p["id"] for p in profiles_resp.data]
 
     # Fetch ALL snapshots
-    snap_resp = (
+    snap_rows = fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", trader_ids)
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     snap_by_user: dict[str, list] = {}
-    for s in snap_resp.data:
+    for s in snap_rows:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     traders = []
@@ -290,20 +288,19 @@ async def get_regime_analysis(days: int = 90) -> dict:
     trader_ids = [p["id"] for p in profiles_resp.data]
     start_date = min(regime_map.keys())
 
-    tx_resp = (
+    tx_rows = fetch_all_rows(
         db.table("transactions")
         .select("user_id, symbol, side, quantity, price, total, created_at")
         .in_("user_id", trader_ids)
         .gte("created_at", f"{start_date}T00:00:00")
         .order("created_at", desc=False)
-        .execute()
     )
 
     # Replay trades and tag each sell's P&L with the regime on trade date
     positions: dict[str, dict[str, dict]] = {}
     regime_pnl: dict[str, dict[str, list[float]]] = {}  # user_id -> regime -> [pnl]
 
-    for tx in tx_resp.data:
+    for tx in tx_rows:
         uid = tx["user_id"]
         sym = tx["symbol"]
         qty = float(tx["quantity"])
@@ -429,16 +426,15 @@ async def get_period_comparison(
 
     trader_ids = [p["id"] for p in profiles_resp.data]
 
-    snap_resp = (
+    snap_rows = fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", trader_ids)
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     snap_by_user: dict[str, list] = {}
-    for s in snap_resp.data:
+    for s in snap_rows:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     traders = []

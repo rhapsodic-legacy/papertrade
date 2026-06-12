@@ -14,7 +14,7 @@ from app.services.portfolio_optimizer import (
     compute_portfolio_correlations,
     compute_target_allocation,
 )
-from app.services.supabase_client import get_supabase_admin
+from app.services.supabase_client import get_supabase_admin, fetch_all_rows
 
 # ---------------------------------------------------------------------------
 # Personality definitions
@@ -1435,18 +1435,17 @@ def build_performance_intelligence(db) -> dict[str, str]:
     from datetime import timedelta
     cutoff = (today - timedelta(days=30)).isoformat()
 
-    tx_resp = (
+    tx_rows = fetch_all_rows(
         db.table("transactions")
         .select("user_id, symbol, asset_type, side, quantity, price, total, created_at, reasoning, modules_used")
         .in_("user_id", trader_ids)
         .gte("created_at", f"{cutoff}T00:00:00")
         .order("created_at", desc=False)
-        .execute()
     )
 
     # Group transactions by user
     tx_by_user: dict[str, list] = {}
-    for tx in tx_resp.data or []:
+    for tx in tx_rows:
         tx_by_user.setdefault(tx["user_id"], []).append(tx)
 
     # Fetch recent reflections

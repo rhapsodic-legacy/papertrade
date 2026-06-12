@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from app.services.supabase_client import get_supabase_admin
+from app.services.supabase_client import get_supabase_admin, fetch_all_rows
 from app.services.analytics import _model_label, _clean_display_name
 
 # Weights for each time period (must sum to 1.0)
@@ -52,19 +52,20 @@ async def get_scored_leaderboard(
     earliest = today - timedelta(days=max(PERIODS) + 3)
     all_user_ids = list(profiles.keys()) + list(ai_user_ids - set(profiles.keys()))
 
-    snapshots_resp = (
+    # 28+ users x 93 days exceeds the 1000-row PostgREST cap — must paginate,
+    # otherwise recent snapshots silently drop and every return is stale.
+    snapshot_rows = fetch_all_rows(
         db.table("portfolio_snapshots")
         .select("user_id, snapshot_date, total_value")
         .in_("user_id", all_user_ids)
         .gte("snapshot_date", earliest.isoformat())
         .lte("snapshot_date", today.isoformat())
         .order("snapshot_date", desc=False)
-        .execute()
     )
 
     # Organize snapshots: {user_id: {date_str: total_value}}
     user_snapshots: dict[str, dict[str, float]] = {}
-    for snap in snapshots_resp.data:
+    for snap in snapshot_rows:
         uid = snap["user_id"]
         user_snapshots.setdefault(uid, {})[snap["snapshot_date"]] = float(snap["total_value"])
 

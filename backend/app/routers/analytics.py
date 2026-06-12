@@ -115,10 +115,13 @@ async def pipeline_timings(days: int = Query(7, ge=1, le=60)):
 @router.get("/modules")
 async def module_attribution(
     trader_id: str | None = Query(None, description="Scope to a single trader"),
+    cite_days: int = Query(14, ge=1, le=90, description="Window for cite-rate stats"),
 ):
     """Which toolkit modules correlate with winning trades?
-    Shows win rate and P&L broken down by module for both buy and sell decisions."""
-    return await get_module_attribution(trader_id=trader_id)
+    Shows win rate and P&L broken down by module for both buy and sell decisions.
+    Includes per-module recent cite-rate and a low_adoption list flagging
+    modules that traders have but never reference."""
+    return await get_module_attribution(trader_id=trader_id, cite_days=cite_days)
 
 
 @router.get("/compare-periods")

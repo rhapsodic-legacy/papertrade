@@ -370,15 +370,17 @@ async def get_ai_trader_profile(trader_id: str):
         .execute()
     )
 
-    # Get snapshots for chart (last 30 days)
+    # Get snapshots for chart (last 30 days) — fetch newest 30 then restore
+    # chronological order; ascending + limit returns the oldest 30 instead.
     snapshots_resp = (
         db.table("portfolio_snapshots")
         .select("snapshot_date, total_value")
         .eq("user_id", trader_id)
-        .order("snapshot_date", desc=False)
+        .order("snapshot_date", desc=True)
         .limit(30)
         .execute()
     )
+    chart_snapshots = list(reversed(snapshots_resp.data or []))
 
     invested_value = sum(p["market_value"] for p in portfolio["positions"])
     total_value = portfolio["cash"] + invested_value
@@ -409,7 +411,7 @@ async def get_ai_trader_profile(trader_id: str):
             for t in trades_resp.data
         ],
         "commentary": commentary_resp.data,
-        "snapshots": snapshots_resp.data,
+        "snapshots": chart_snapshots,
     }
 
 
