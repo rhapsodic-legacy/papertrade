@@ -1725,7 +1725,123 @@ def _format_fleet_conviction(fleet: dict | None, invert: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _format_cross_asset(brief: dict) -> str:
+# V2 personalities inherit the macro-implication column of their base
+# personality — their macro sensitivities are the same, only trade cadence
+# and exit style differ.
+_MACRO_PERSONALITY_ALIASES = {
+    "crypto_chad_swing": "crypto_chad",
+    "contrarian_carl_patient": "contrarian_carl",
+}
+
+# Channel-tilt × personality → (target label, implication). Adoption data
+# showed traders quote labeled per-symbol hooks (fleet_conviction,
+# btc_onchain) but never translate abstract macro ("DXY +1%") into trades
+# themselves — so we serve the translation pre-chewed. Personalities
+# missing from a cell genuinely don't care about that channel (e.g.
+# Steady Eddie and DXY); no bullet is rendered for them.
+_MACRO_IMPLICATION_TABLE: dict[str, dict[str, tuple[str, str]]] = {
+    "dxy_strengthening": {
+        "vanilla": ("BTC", "dollar strength is a headwind for crypto; demand a stronger bottom-up signal before adding"),
+        "yolo_bot": ("Tech/momentum names", "a strengthening dollar pressures high-multiple momentum; tighten entries"),
+        "contrarian_carl": ("Crypto complex", "dollar-driven dislocations in BTC/ETH-sensitive names are contrarian watch material"),
+        "crypto_chad": ("BTC/ETH", "direct headwind through the valuation channel; favor scaling-in over fresh aggressive buys"),
+    },
+    "dxy_weakening": {
+        "vanilla": ("BTC", "dollar weakness is a tailwind for crypto exposure"),
+        "yolo_bot": ("Risk assets", "a weakening dollar is a broad risk-on tailwind for momentum entries"),
+        "contrarian_carl": ("Rallies", "dollar-weakness rallies tend to overshoot — candidates to fade into strength"),
+        "crypto_chad": ("BTC/ETH", "valuation tailwind from the weakening dollar; favor adds on your accumulation plan"),
+    },
+    "real_yield_rising": {
+        "vanilla": ("Growth equities", "rising real yields compress growth multiples; trim conviction on stretched valuations"),
+        "steady_eddie": ("TLT", "rising real yields mean bond-price pain; defer adds to duration"),
+        "yolo_bot": ("Growth momentum", "rising real yields pressure the growth-momentum trade; respect failed breakouts"),
+        "contrarian_carl": ("Gold-sensitive names", "rising real yields make gold-sensitive names cheaper — fade material weakness"),
+        "crypto_chad": ("BTC", "modest drag from rising real yields (higher opportunity cost of non-yielding assets)"),
+    },
+    "real_yield_falling": {
+        "vanilla": ("Growth equities", "falling real yields lift growth multiples"),
+        "steady_eddie": ("TLT", "falling real yields lift bond prices; favorable window to lock in adds"),
+        "yolo_bot": ("Growth momentum", "falling real yields add fuel to growth momentum"),
+        "contrarian_carl": ("Defensives", "falling real yields argue for unwinding defensive overweights"),
+        "crypto_chad": ("BTC", "modest lift from falling real yields"),
+    },
+    "breakevens_high": {
+        "vanilla": ("Cyclicals", "elevated inflation expectations are a cyclicals/commodities tailwind"),
+        "steady_eddie": ("NUE/X/CAT", "rising inflation expectations lift industrial cyclicals"),
+        "yolo_bot": ("Materials", "inflation expectations elevated — momentum rotation into materials/commodities"),
+        "contrarian_carl": ("Disinflation trades", "elevated breakevens — take profits on disinflation positioning"),
+    },
+    "breakevens_low": {
+        "vanilla": ("TLT", "anchored-to-falling inflation expectations favor duration"),
+        "steady_eddie": ("TLT", "low breakevens favor duration; TLT adds attractive"),
+        "yolo_bot": ("Defensives", "disinflation regime — momentum broadens out of cyclicals into defensives"),
+        "contrarian_carl": ("Quality bond proxies", "disinflation regime — accumulate quality bond proxies"),
+    },
+    "wti_up": {
+        "vanilla": ("XOM/CVX", "crude strength lifts energy; transports face input-cost drag"),
+        "steady_eddie": ("XOM/CVX", "crude strength supports energy dividend names"),
+        "yolo_bot": ("Energy momentum", "crude breakout — energy momentum names get a lift"),
+        "contrarian_carl": ("Energy holdings", "crude spike — take profits into strength if holding energy"),
+    },
+    "wti_down": {
+        "vanilla": ("XOM/CVX", "crude weakness drags energy; transports get an input-cost lift"),
+        "steady_eddie": ("XOM/CVX", "crude weakness pressures energy names; pause adds"),
+        "yolo_bot": ("Energy momentum", "crude breakdown — rotate momentum out of energy"),
+        "contrarian_carl": ("Energy", "crude dislocation — accumulate quality energy on weakness"),
+    },
+}
+
+
+def _compute_macro_implications(ca: dict, personality_key: str) -> list[str]:
+    """Translate active cross-asset tilts into labeled per-symbol bullets for
+    one personality. Deterministic lookup, no LLM. Empty list when no channel
+    is materially moving or none of the active tilts matter to this
+    personality."""
+    series = (ca or {}).get("series") or {}
+    pkey = _MACRO_PERSONALITY_ALIASES.get(personality_key, personality_key)
+
+    # (tilt key, live stat baked into the bullet). Thresholds match the
+    # MIXED-regime synthesis below; breakevens are level-based.
+    active: list[tuple[str, str]] = []
+    dxy = series.get("DXY_broad")
+    if dxy:
+        chg = dxy["change_5d_pct"]
+        if chg >= 0.3:
+            active.append(("dxy_strengthening", f"DXY {dxy['value']:.1f} ({chg:+.1f}% 5d, strengthening)"))
+        elif chg <= -0.3:
+            active.append(("dxy_weakening", f"DXY {dxy['value']:.1f} ({chg:+.1f}% 5d, weakening)"))
+    ry = series.get("Real_10Y")
+    if ry:
+        bps = ry["change_5d_bps"]
+        if bps >= 10:
+            active.append(("real_yield_rising", f"10Y real {ry['value']:.2f}% ({bps:+.0f}bps 5d, rising)"))
+        elif bps <= -10:
+            active.append(("real_yield_falling", f"10Y real {ry['value']:.2f}% ({bps:+.0f}bps 5d, falling)"))
+    be = series.get("Breakeven_10Y")
+    if be:
+        if be["value"] > 2.6:
+            active.append(("breakevens_high", f"10Y breakeven {be['value']:.2f}% (above 2.6%)"))
+        elif be["value"] < 1.8:
+            active.append(("breakevens_low", f"10Y breakeven {be['value']:.2f}% (below 1.8%)"))
+    wti = series.get("WTI")
+    if wti:
+        chg = wti["change_5d_pct"]
+        if chg >= 3:
+            active.append(("wti_up", f"WTI ${wti['value']:.0f} ({chg:+.1f}% 5d)"))
+        elif chg <= -3:
+            active.append(("wti_down", f"WTI ${wti['value']:.0f} ({chg:+.1f}% 5d)"))
+
+    bullets = []
+    for tilt_key, stat in active:
+        cell = _MACRO_IMPLICATION_TABLE.get(tilt_key, {}).get(pkey)
+        if cell:
+            target, implication = cell
+            bullets.append(f"{target}: {stat} — {implication}")
+    return bullets
+
+
+def _format_cross_asset(brief: dict, personality_key: str | None = None) -> str:
     """Format DXY, gold, real yields, breakevens, WTI with a regime synthesis line.
     These are the four macro channels that drive risk-asset valuations:
     - DXY ↑ = headwind for crypto + EM equities (denominated in $)
@@ -1744,6 +1860,17 @@ def _format_cross_asset(brief: dict) -> str:
     risk_regime = ca.get("risk_regime", "?")
 
     lines = ["### Cross-Asset Macro"]
+
+    # Per-personality named-symbol hooks first — this is the part traders
+    # actually quote. The abstract context below it went 0-for-203 trades
+    # on its own.
+    if personality_key:
+        implications = _compute_macro_implications(ca, personality_key)
+        if implications:
+            lines.append("FOR YOUR BOOK (macro mapped to your names — cite these directly):")
+            for bullet in implications:
+                lines.append(f"  - {bullet}")
+            lines.append("")
 
     # QUOTABLE line with the highest-signal numbers
     quotable_parts = []
@@ -1865,7 +1992,7 @@ _MODULE_FORMATTERS = {
     "fleet_conviction": lambda ctx: _format_fleet_conviction(
         ctx.get("fleet_signals"), invert=ctx.get("invert", False)
     ),
-    "cross_asset": lambda ctx: _format_cross_asset(ctx["brief"]),
+    "cross_asset": lambda ctx: _format_cross_asset(ctx["brief"], ctx.get("personality_key")),
 }
 
 
@@ -1946,6 +2073,7 @@ def assemble_toolkit_prompt(
     # Module sections, sorted by weight (highest first)
     ctx = {
         "brief": brief,
+        "personality_key": personality_key,
         "pattern_results": agentic_data.get("pattern_results", {}),
         "correlations": agentic_data.get("correlations", []),
         "allocation": agentic_data.get("allocation", {}),
