@@ -1310,7 +1310,48 @@ def _format_dynamic_risk(ctx: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_options_flow(brief: dict) -> str:
+# VIX (fear) → per-personality risk-posture hook. Framed around SIZING and
+# dry-powder, not new-trade triggers — options_flow runs PnL-negative in
+# attribution, so the value is discipline (size down / deploy at the right
+# fear level), not generating more volume. Same alias rule as cross_asset.
+_VIX_IMPLICATION_TABLE: dict[str, dict[str, str]] = {
+    "high_fear": {  # VIX >= 25 (ELEVATED_FEAR / EXTREME_FEAR)
+        "vanilla": "trim new-position sizing and hold dry powder until volatility cools",
+        "steady_eddie": "defensive posture — pause adds, favor quality/dividend names over beta",
+        "contrarian_carl": "your buy-the-fear window is opening — deploy dry powder into quality dislocations, not junk",
+    },
+    "low_fear": {  # VIX < 15 (COMPLACENT / EXTREME_COMPLACENCY)
+        "vanilla": "normal sizing, but complacency can precede corrections — don't over-extend on fresh risk",
+        "steady_eddie": "calm conditions support measured adds to core holdings",
+        "contrarian_carl": "complacency means poor contrarian entries — stay patient, build cash for the next spike",
+    },
+}
+
+
+def _compute_vix_implications(flow: dict, personality_key: str | None) -> str | None:
+    """One labeled risk-posture line for this personality given the VIX regime.
+    Returns None when VIX is mid-range (15-25) or the personality has no mapped
+    stance."""
+    if not personality_key:
+        return None
+    pkey = _MACRO_PERSONALITY_ALIASES.get(personality_key, personality_key)
+    vix = flow.get("vix")
+    signal = flow.get("signal", "NEUTRAL")
+    if vix is None:
+        return None
+    if signal in ("ELEVATED_FEAR", "EXTREME_FEAR"):
+        regime, tag = "high_fear", "elevated fear"
+    elif signal in ("COMPLACENT", "EXTREME_COMPLACENCY"):
+        regime, tag = "low_fear", "complacency"
+    else:
+        return None
+    stance = _VIX_IMPLICATION_TABLE.get(regime, {}).get(pkey)
+    if not stance:
+        return None
+    return f"RISK POSTURE: VIX {vix} ({tag}) — {stance}."
+
+
+def _format_options_flow(brief: dict, personality_key: str | None = None) -> str:
     """VIX (CBOE Volatility Index) — the options market's fear gauge."""
     flow = brief.get("options_flow")
     if not flow:
@@ -1337,6 +1378,10 @@ def _format_options_flow(brief: dict) -> str:
     lines = [
         "### Options Flow (VIX — CBOE Volatility Index)",
     ]
+    posture = _compute_vix_implications(flow, personality_key)
+    if posture:
+        lines.append(f"FOR YOUR BOOK (cite this directly): {posture}")
+        lines.append("")
     if quotable:
         lines.append(f"QUOTABLE: {quotable} — cite this directly when adjusting risk-on/off positioning today.")
         lines.append("")
@@ -1379,19 +1424,58 @@ def _format_options_flow(brief: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_yield_curve(brief: dict) -> str:
+# Yield curve → per-personality positioning tilt. Keyed on rate_expectation
+# (the bond market's priced CUTS/HIKES) rather than per-symbol daily calls —
+# the curve is a months-to-years signal, so the honest hook is a slow
+# positioning BIAS, not a daily trigger. Same alias rule as cross_asset.
+_YIELD_IMPLICATION_TABLE: dict[str, dict[str, str]] = {
+    "CUTS_EXPECTED": {
+        "vanilla": "falling-rate backdrop supports growth multiples — modest tilt toward growth over deep value",
+        "steady_eddie": "lock in duration / bond proxies before cuts land; dividend names tend to re-rate up",
+        "contrarian_carl": "cuts mean the Fed sees weakness — favor quality balance sheets, avoid cyclical value traps",
+        "crypto_chad": "falling rates are a tailwind for BTC/ETH — supports your scaling-in plan",
+    },
+    "HIKES_EXPECTED": {
+        "vanilla": "rising-rate pressure on growth multiples — tilt toward value/quality",
+        "steady_eddie": "defer long-duration adds; short-duration and floating-rate exposure favored",
+        "contrarian_carl": "rising rates pressure speculative names — your value names hold up comparatively better",
+        "crypto_chad": "rate headwind for crypto — favor scaling over fresh aggressive adds",
+    },
+}
+
+
+def _compute_yield_implications(curve: dict, personality_key: str | None) -> str | None:
+    """One positioning-bias line for this personality given the bond market's
+    priced rate path. Returns None when rates are on hold or the personality
+    has no mapped stance."""
+    if not personality_key:
+        return None
+    pkey = _MACRO_PERSONALITY_ALIASES.get(personality_key, personality_key)
+    rate_exp = curve.get("rate_expectation")
+    stance = _YIELD_IMPLICATION_TABLE.get(rate_exp, {}).get(pkey)
+    if not stance:
+        return None
+    label = "rate CUTS priced in" if rate_exp == "CUTS_EXPECTED" else "rate HIKES priced in"
+    return f"POSITIONING BIAS (slow signal — backdrop, not a daily trigger): {label} — {stance}."
+
+
+def _format_yield_curve(brief: dict, personality_key: str | None = None) -> str:
     """Treasury yields and curve shape — rate and recession indicators."""
     curve = brief.get("yield_curve")
     if not curve:
         return ""
 
-    lines = [
-        "### Yield Curve & Interest Rates",
+    lines = ["### Yield Curve & Interest Rates"]
+    bias = _compute_yield_implications(curve, personality_key)
+    if bias:
+        lines.append(f"FOR YOUR BOOK: {bias}")
+        lines.append("")
+    lines.append(
         "NOTE: The yield curve is one of the most reliable macro indicators, but its signals "
         "play out over months to years, not days. An inverted curve preceded every US recession "
         "since 1970, but the lag between inversion and recession ranges from 6 to 24 months. "
-        "Use this as a backdrop for your strategy, not as a daily trading signal.",
-    ]
+        "Use this as a backdrop for your strategy, not as a daily trading signal."
+    )
 
     rates = curve.get("rates", {})
     if rates:
@@ -1985,8 +2069,8 @@ _MODULE_FORMATTERS = {
     "signal_ranker": lambda ctx: _format_signal_ranker(ctx["brief"]),
     "trade_context": lambda ctx: _format_trade_context(ctx),
     "dynamic_risk": lambda ctx: _format_dynamic_risk(ctx),
-    "options_flow": lambda ctx: _format_options_flow(ctx["brief"]),
-    "yield_curve": lambda ctx: _format_yield_curve(ctx["brief"]),
+    "options_flow": lambda ctx: _format_options_flow(ctx["brief"], ctx.get("personality_key")),
+    "yield_curve": lambda ctx: _format_yield_curve(ctx["brief"], ctx.get("personality_key")),
     "expert_opinion": lambda ctx: _format_expert_opinion(ctx["brief"], invert=ctx.get("invert", False)),
     "btc_onchain": lambda ctx: _format_btc_onchain(ctx["brief"]),
     "fleet_conviction": lambda ctx: _format_fleet_conviction(

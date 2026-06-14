@@ -1969,6 +1969,22 @@ DISCIPLINE_RULES: dict[str, list[dict]] = {
         {"id": "has_tech", "label": "Tech Stock Hedges", "check": "has_tech_stocks"},
         {"id": "module_alignment", "label": "Uses Momentum+Technicals", "required_modules": ["momentum", "technicals"]},
     ],
+    # V2 swing variant: patient, tiered crypto (BTC/ETH 40-50% + utility 15-25%),
+    # 20-30% tech, 10-25% dry powder, 9-12 trades/month.
+    "crypto_chad_swing": [
+        {"id": "crypto_heavy", "label": "55-80% Crypto", "min_crypto_pct": 55, "max_crypto_pct": 80},
+        {"id": "cash_reserve", "label": "Dry Powder (10-25%)", "target_min": 10, "target_max": 25},
+        {"id": "low_turnover", "label": "Patient (≤2 trades/day avg)", "max_daily_trades": 2},
+        {"id": "module_alignment", "label": "Uses BTC On-Chain+Expert Opinion", "required_modules": ["btc_onchain", "expert_opinion"]},
+    ],
+    # V2 patient deep-value contrarian: S&P 500 only, 6-10 names, 15-25% cash,
+    # 8-12 trades/month.
+    "contrarian_carl_patient": [
+        {"id": "cash_reserve", "label": "Dry Powder (15-25% cash)", "target_min": 15, "target_max": 25},
+        {"id": "diversification", "label": "6-10 positions", "min_positions": 6, "max_positions": 10},
+        {"id": "low_turnover", "label": "Patient (≤2 trades/day avg)", "max_daily_trades": 2},
+        {"id": "module_alignment", "label": "Uses Fundamentals+Sentiment", "required_modules": ["fundamentals", "sentiment"]},
+    ],
 }
 
 

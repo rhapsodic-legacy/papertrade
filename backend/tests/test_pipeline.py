@@ -609,8 +609,8 @@ class TestTradeResponseParsing:
             settings.mistral_api_key = "test-key"
             mock_settings.return_value = settings
 
-            # This should NOT raise NameError
-            trades = await _get_ai_trades(
+            # This should NOT raise NameError. Returns (trades, conditional_orders).
+            trades, cond_orders = await _get_ai_trades(
                 "contrarian_carl", "mistral",
                 brief={"stocks": [], "crypto": [], "news": [], "stock_technicals": {},
                        "crypto_technicals": {}, "fundamentals": {}, "analyst_recommendations": {},
@@ -620,6 +620,7 @@ class TestTradeResponseParsing:
                 trade_memory="",
             )
             assert isinstance(trades, list)
+            assert isinstance(cond_orders, list)
 
 
 # ---------------------------------------------------------------------------
@@ -808,7 +809,7 @@ class TestRunTraderIntegration:
              patch("app.services.ai_trader._get_ai_trade_history", return_value=[]), \
              patch("app.services.ai_trader._format_trade_memory", return_value="No recent trades."), \
              patch("app.services.reflection.get_reflection_memory", return_value=""), \
-             patch("app.services.ai_trader._get_ai_trades", new_callable=AsyncMock, return_value=mock_trades), \
+             patch("app.services.ai_trader._get_ai_trades", new_callable=AsyncMock, return_value=(mock_trades, [])), \
              patch("app.services.ai_trader._execute_ai_trade", new_callable=AsyncMock, return_value=mock_execute_result):
 
             result = await _run_trader(db, self._sample_brief(), self._sample_profile())
@@ -831,7 +832,7 @@ class TestRunTraderIntegration:
              patch("app.services.ai_trader._get_ai_trade_history", return_value=[]), \
              patch("app.services.ai_trader._format_trade_memory", return_value=""), \
              patch("app.services.reflection.get_reflection_memory", return_value=""), \
-             patch("app.services.ai_trader._get_ai_trades", new_callable=AsyncMock, return_value=[]), \
+             patch("app.services.ai_trader._get_ai_trades", new_callable=AsyncMock, return_value=([], [])), \
              patch("app.services.ai_trader._execute_ai_trade", new_callable=AsyncMock) as mock_exec:
 
             result = await _run_trader(db, self._sample_brief(), self._sample_profile())

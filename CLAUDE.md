@@ -1,7 +1,14 @@
 # PaperTrade - Claude Code Guide
 
+## ⚠️ HARD CONSTRAINT — LOCAL MACHINE HAS 8GB RAM
+The user's local Mac Mini has **8GB RAM**. Gemma 4 e2b alone is ~7GB. Heavy local LLM calls crash the box and force a reboot — this has already happened. Before adding ANY new local LLM call:
+- Verify the prompt is short and `max_tokens` is small
+- Do NOT run multiple Gemma calls in parallel (`asyncio.gather`) without confirming serial execution
+- Prefer Cloud Run + paid API (Mistral) over local Gemma for new LLM work
+- When in doubt, ASK the user before running. Do not "smoke test" speculative Gemma additions locally.
+
 ## Project Overview
-Paper trading platform with $100k virtual portfolios. 20 AI traders (5 personalities x 4 LLM models) compete alongside human users. FastAPI backend, Next.js frontend, Supabase DB.
+Paper trading platform with $100k virtual portfolios. 25 AI traders (5 personality lines x 5 LLM models) compete alongside human users. FastAPI backend, Next.js frontend, Supabase DB.
 
 ## Tech Stack
 - **Backend:** FastAPI (Python 3.13) — `backend/`
@@ -12,7 +19,7 @@ Paper trading platform with $100k virtual portfolios. 20 AI traders (5 personali
 - **Cron:** GCP Cloud Scheduler (2 jobs) + local launchd (Gemma preprocessing)
 - **Secrets:** GCP Secret Manager
 - **Local AI:** Ollama + Gemma 4 e2b for free preprocessing (headline clustering, analyst consensus, insider flow, movers narrative)
-- **LLMs:** Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2 — all via Mistral HTTP API (2 API keys, 10 traders each), no SDKs. Groq/Gemini configs preserved but no longer used for trading.
+- **LLMs:** 5 models = Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2 (via Mistral HTTP API, 2 keys x 10 traders) + Llama 4 Maverick (via NVIDIA API, 5 traders), no SDKs. Groq/Gemini configs preserved but no longer used for trading.
 
 ## Architecture
 
@@ -42,10 +49,10 @@ All Gemma preprocessing has graceful fallback — if Ollama is unavailable, trad
 - **Vanilla** — balanced portfolio manager
 - **Steady Eddie** — conservative, dividend-focused
 - **YOLO Bot** — momentum/high-risk
-- **Contrarian Carl** — buys fear, sells euphoria
-- **Crypto Chad** — crypto-heavy with stock hedges
+- **Contrarian Carl** — buys fear, sells euphoria (mid-migration to **Contrarian Carl New** / `contrarian_carl_patient`: deep-value, long-horizon swing variant)
+- **Crypto Chad** — crypto-heavy with stock hedges (mid-migration to **Crypto Chad New** / `crypto_chad_swing`: patient, tiered BTC/ETH-core swing variant)
 
-Each personality runs on 4 Mistral models (Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2) = 20 AI traders total. Split across 2 API keys (10 each).
+Each personality line runs on 5 models (Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2, Llama 4 Maverick) = 25 AI traders total. The Crypto Chad and Contrarian Carl lines are being migrated model-by-model from the base personality to the patient "New" variants (`V2_PERSONALITY_KEYS` in `ai_trader.py`), so the live DB mix is uneven (e.g. base Crypto Chad on 1 model, Crypto Chad New on 4). 20 Mistral traders split across 2 keys (10 each); 5 Llama 4 Maverick traders on the NVIDIA key.
 
 ### Key Services
 | Service | Purpose |
@@ -99,12 +106,13 @@ Two scheduled jobs (timezone: America/New_York):
 - **Config:** `OLLAMA_BASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` in `.env`
 
 ### GCP Secret Manager
-`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`, `NVIDIA_API_KEY`
 
 Plain env vars on Cloud Run: `STARTING_BALANCE=100000.00`, `FRONTEND_URL=https://papertrade-iota.vercel.app`
 
 `MISTRAL_API_KEY` powers 10 traders (Mistral Large + Mistral Medium models) plus reflections and sentiment scoring.
 `MISTRAL_API_KEY_2` powers the other 10 traders (Mistral Small + Mistral Large 2 models).
+`NVIDIA_API_KEY` powers the 5 Llama 4 Maverick traders (`_call_nvidia_nim`, `nvidia-deepseek-r1` model key). Traders silently skip if unset.
 `GROQ_API_KEY` is no longer used for trading but config is preserved.
 
 ## API Routes
