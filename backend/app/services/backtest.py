@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 from app.services.supabase_client import get_supabase_admin, fetch_all_rows
 from app.services.market_data import get_stock_candles, STOCK_SECTORS
-from app.services.ai_trader import PERSONALITIES
+from app.services.ai_trader import PERSONALITIES, resolve_personality_key
 from app.services.analytics import _model_label, _clean_display_name
 
 STARTING_BALANCE = 100_000.0
@@ -85,11 +85,7 @@ async def get_benchmark_comparison(days: int = 90) -> dict:
         trader_return = (last_value - first_value) / first_value * 100
 
         # Determine personality
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
 
         series = []
         for s in snaps:
@@ -185,11 +181,7 @@ async def get_enhancement_comparison() -> dict:
         pre_snaps = [s for s in snaps if s["snapshot_date"] < enhancement_date]
         post_snaps = [s for s in snaps if s["snapshot_date"] >= enhancement_date]
 
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
 
         pre_metrics = _compute_period_metrics(pre_snaps)
         post_metrics = _compute_period_metrics(post_snaps)
@@ -338,11 +330,7 @@ async def get_regime_analysis(days: int = 90) -> dict:
         if not by_regime:
             continue
 
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
 
         regime_stats = {}
         for regime, pnls in by_regime.items():
@@ -369,11 +357,7 @@ async def get_regime_analysis(days: int = 90) -> dict:
         profile = next((p for p in profiles_resp.data if p["id"] == uid), None)
         if not profile:
             continue
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
         if not personality:
             continue
         for regime, pnls in by_regime.items():
@@ -447,11 +431,7 @@ async def get_period_comparison(
         a_snaps = [s for s in snaps if period_a_start <= s["snapshot_date"] <= period_a_end]
         b_snaps = [s for s in snaps if period_b_start <= s["snapshot_date"] <= period_b_end]
 
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
 
         a_metrics = _compute_period_metrics(a_snaps)
         b_metrics = _compute_period_metrics(b_snaps)

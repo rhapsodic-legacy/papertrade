@@ -71,10 +71,7 @@ async def generate_commentary() -> dict:
         # Determine personality from display name (or custom trader config)
         personality_key = None
         custom_personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in display_name:
-                personality_key = pkey
-                break
+        personality_key = resolve_personality_key(display_name)
 
         if not personality_key and model_key == "custom":
             try:

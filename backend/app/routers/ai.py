@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES
+from app.services.ai_trader import setup_ai_accounts, run_ai_trading, _get_ai_portfolio, PERSONALITIES, resolve_personality_key
 from app.services.conditional_orders import get_all_orders, cancel_order, check_and_execute_orders
 from app.services.ai_commentary import generate_commentary, get_commentary, get_commentary_dates, get_trader_commentary
 from app.services.analytics import _model_label, _clean_display_name
@@ -213,11 +213,7 @@ async def ai_trade_feed(
     # Build profile lookup with personality
     profile_map = {}
     for p in profiles_resp.data:
-        personality_key = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in p["display_name"]:
-                personality_key = pkey
-                break
+        personality_key = resolve_personality_key(p["display_name"])
         profile_map[p["id"]] = {
             "display_name": _clean_display_name(p["display_name"]),
             "ai_model": p["ai_model"],
@@ -288,11 +284,7 @@ async def list_ai_traders():
     )
     traders = []
     for p in resp.data:
-        personality_key = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in p["display_name"]:
-                personality_key = pkey
-                break
+        personality_key = resolve_personality_key(p["display_name"])
         traders.append({
             "id": p["id"],
             "display_name": _clean_display_name(p["display_name"]),
@@ -333,10 +325,7 @@ async def get_ai_trader_profile(trader_id: str):
     # Determine personality (built-in or custom)
     personality_key = None
     custom_config = None
-    for pkey, pinfo in PERSONALITIES.items():
-        if pinfo["name"] in profile["display_name"]:
-            personality_key = pkey
-            break
+    personality_key = resolve_personality_key(profile["display_name"])
 
     if not personality_key and profile.get("ai_model") == "custom":
         try:

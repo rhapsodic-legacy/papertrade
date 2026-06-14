@@ -347,7 +347,7 @@ async def get_ai_comparison() -> dict:
         snap_by_user.setdefault(s["user_id"], []).append(s)
 
     # Import personality mapping
-    from app.services.ai_trader import PERSONALITIES
+    from app.services.ai_trader import PERSONALITIES, resolve_personality_key
 
     # Compute per-trader
     traders = []
@@ -360,11 +360,7 @@ async def get_ai_comparison() -> dict:
         risk_metrics = _compute_risk_metrics(snaps)
 
         # Determine personality
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
 
         traders.append({
             "id": uid,
@@ -417,7 +413,7 @@ async def get_model_deep_dive(days: int = 7) -> dict:
     (win rate, avg P&L per sell, trade frequency) over that window.
     """
     db = get_supabase_admin()
-    from app.services.ai_trader import PERSONALITIES
+    from app.services.ai_trader import PERSONALITIES, resolve_personality_key
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     today_str = date.today().isoformat()
@@ -492,11 +488,7 @@ async def get_model_deep_dive(days: int = 7) -> dict:
         reasoning_lens = [len(t.get("reasoning", "") or "") for t in txs]
         avg_reasoning_len = sum(reasoning_lens) / len(reasoning_lens) if reasoning_lens else 0
 
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in profile["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(profile["display_name"])
 
         if not personality and profile.get("ai_model") == "custom":
             personality = "custom"
@@ -950,15 +942,11 @@ async def get_reflection_trends(trader_id: str | None = None) -> dict:
         .execute()
     )
 
-    from app.services.ai_trader import PERSONALITIES
+    from app.services.ai_trader import PERSONALITIES, resolve_personality_key
 
     profile_map = {}
     for p in profiles_resp.data:
-        personality = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in p["display_name"]:
-                personality = pkey
-                break
+        personality = resolve_personality_key(p["display_name"])
         profile_map[p["id"]] = {
             "display_name": _clean_display_name(p["display_name"]),
             "personality": personality,
@@ -1255,20 +1243,10 @@ async def get_module_attribution(trader_id: str | None = None, cite_days: int = 
 
     # --- Cite-rate: did traders who HAVE a module actually use it recently? ---
     from datetime import datetime, timedelta, timezone
-    from app.services.ai_trader import PERSONALITIES
-
-    def _personality_for(display_name: str) -> str | None:
-        # Longest-name match: "Crypto Chad New (...)" must resolve to
-        # crypto_chad_swing, not crypto_chad, despite the substring overlap.
-        best = None
-        for pkey, pinfo in PERSONALITIES.items():
-            if pinfo["name"] in display_name:
-                if best is None or len(pinfo["name"]) > len(PERSONALITIES[best]["name"]):
-                    best = pkey
-        return best
+    from app.services.ai_trader import PERSONALITIES, resolve_personality_key
 
     trader_personality = {
-        p["id"]: _personality_for(p.get("display_name") or "")
+        p["id"]: resolve_personality_key(p.get("display_name") or "")
         for p in profiles_resp.data
     }
     toolkit_modules = {
@@ -2006,12 +1984,8 @@ async def compute_discipline_score(trader_id: str) -> dict:
     cash = float(profile.data["cash_balance"])
 
     # Determine personality
-    from app.services.ai_trader import PERSONALITIES
-    personality_key = None
-    for pkey, pinfo in PERSONALITIES.items():
-        if pinfo["name"] in display_name:
-            personality_key = pkey
-            break
+    from app.services.ai_trader import PERSONALITIES, resolve_personality_key
+    personality_key = resolve_personality_key(display_name)
     if not personality_key or personality_key not in DISCIPLINE_RULES:
         return {"error": f"Unknown personality for {display_name}"}
 

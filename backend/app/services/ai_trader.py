@@ -456,6 +456,23 @@ PERSONALITIES = {
     },
 }
 
+
+def resolve_personality_key(display_name: str) -> str | None:
+    """Map a trader's display name to its personality key by LONGEST matching
+    name. Critical for the V2 "New" variants: "Crypto Chad New" must resolve to
+    crypto_chad_swing, not crypto_chad — but "Crypto Chad" is a substring of
+    "Crypto Chad New", so naive first-match mis-routes every variant trader to
+    its base personality. Use this everywhere a display name maps to a key."""
+    best = None
+    best_len = 0
+    for pkey, pinfo in PERSONALITIES.items():
+        name = pinfo["name"]
+        if name in (display_name or "") and len(name) > best_len:
+            best = pkey
+            best_len = len(name)
+    return best
+
+
 # Model configurations
 # NOTE: Gemini models disabled (spending cap hit). Swapped to free Groq-hosted
 # alternatives. Original Gemini config preserved for re-enablement:
@@ -1415,11 +1432,7 @@ def build_performance_intelligence(db) -> dict[str, str]:
     profile_map = {}
     personality_groups: dict[str, list[dict]] = {}
     for p in profiles_resp.data:
-        pkey = None
-        for k, v in PERSONALITIES.items():
-            if v["name"] in p["display_name"]:
-                pkey = k
-                break
+        pkey = resolve_personality_key(p["display_name"])
         profile_map[p["id"]] = {
             "display_name": p["display_name"],
             "ai_model": p["ai_model"],
