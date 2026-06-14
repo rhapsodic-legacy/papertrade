@@ -1,0 +1,456 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 .AppleSystemUIFontMonospaced-Regular;}
+{\colortbl;\red255\green255\blue255;\red245\green245\blue246;\red25\green14\blue14;\red144\green142\blue155;
+\red16\green14\blue21;}
+{\*\expandedcolortbl;;\cssrgb\c96863\c96863\c97255;\cssrgb\c13333\c6667\c6667;\cssrgb\c63137\c62745\c67059;
+\cssrgb\c7451\c6667\c10980;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\fs24 \cf2 \cb3 \expnd0\expndtw0\kerning0
+\}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyD1UEhY7xw0rKatpIBtLYXZmXuBIh6SbYI "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 ERROR:app.services.ai_trader: Trader Crypto Chad (Gemini Flash) failed: Gemini gemini-2.5-flash error 429: \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3   "error": \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "code": 429,\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [PIPELINE ERROR] Trader Crypto Chad (Gemini Flash) failed: Gemini gemini-2.5-flash error 429: \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "message": "Your project has exceeded its spending cap.",\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5   "error": \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "status": "RESOURCE_EXHAUSTED"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3   \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "code": 429,\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "message": "Your project has exceeded its spending cap.",\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "status": "RESOURCE_EXHAUSTED"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5   \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [PIPELINE] Starting trader: YOLO Bot (Gemini Flash) (model=gemini-flash)\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/profiles?select=cash_balance&id=eq.ea351617-1c84-4359-b0fc-b4dc2270cbae "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/positions?select=symbol%2C%20asset_type%2C%20quantity%2C%20avg_cost_basis&user_id=eq.ea351617-1c84-4359-b0fc-b4dc2270cbae&quantity=gt.0 "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/transactions?select=symbol%2C%20created_at&user_id=eq.ea351617-1c84-4359-b0fc-b4dc2270cbae&side=eq.buy&symbol=in.%28INTC%2CNFLX%2CWMT%29&order=created_at "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/transactions?select=symbol%2C%20asset_type%2C%20side%2C%20quantity%2C%20price%2C%20total%2C%20created_at&user_id=eq.ea351617-1c84-4359-b0fc-b4dc2270cbae&order=created_at.desc&limit=15 "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/stock/candle?symbol=NFLX&resolution=D&from=1769040257&to=1774224257&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 403 Forbidden"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 WARNING:app.services.market_data: Finnhub candles NFLX: HTTP 403\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:app.services.market_data: Falling back to Yahoo Finance for NFLX candles\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://query1.finance.yahoo.com/v8/finance/chart/NFLX?range=60d&interval=1d "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyD1UEhY7xw0rKatpIBtLYXZmXuBIh6SbYI "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 ERROR:app.services.ai_trader: Trader YOLO Bot (Gemini Flash) failed: Gemini gemini-2.5-flash error 429: \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3   "error": \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "code": 429,\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "message": "Your project has exceeded its spending cap.",\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "status": "RESOURCE_EXHAUSTED"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3   \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [PIPELINE ERROR] Trader YOLO Bot (Gemini Flash) failed: Gemini gemini-2.5-flash error 429: \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5   "error": \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "code": 429,\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "message": "Your project has exceeded its spending cap.",\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "status": "RESOURCE_EXHAUSTED"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5   \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [PIPELINE] Starting trader: Contrarian Carl (Gemini Flash) (model=gemini-flash)\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/profiles?select=cash_balance&id=eq.ab7d47f6-bdbd-460b-8ae9-2ce00cb11f07 "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/positions?select=symbol%2C%20asset_type%2C%20quantity%2C%20avg_cost_basis&user_id=eq.ab7d47f6-bdbd-460b-8ae9-2ce00cb11f07&quantity=gt.0 "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/transactions?select=symbol%2C%20created_at&user_id=eq.ab7d47f6-bdbd-460b-8ae9-2ce00cb11f07&side=eq.buy&symbol=in.%28ADBE%2CMETA%2CCRM%2CAAPL%2CSBUX%2CSNOW%2CBIDU%29&order=created_at "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=ADBE&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=META&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=CRM&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=AAPL&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=SBUX&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=SNOW&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=BIDU&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/transactions?select=symbol%2C%20asset_type%2C%20side%2C%20quantity%2C%20price%2C%20total%2C%20created_at&user_id=eq.ab7d47f6-bdbd-460b-8ae9-2ce00cb11f07&order=created_at.desc&limit=15 "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/stock/candle?symbol=BIDU&resolution=D&from=1769040267&to=1774224267&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 403 Forbidden"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 WARNING:app.services.market_data: Finnhub candles BIDU: HTTP 403\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:app.services.market_data: Falling back to Yahoo Finance for BIDU candles\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://query1.finance.yahoo.com/v8/finance/chart/BIDU?range=60d&interval=1d "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyD1UEhY7xw0rKatpIBtLYXZmXuBIh6SbYI "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [PIPELINE ERROR] Trader Contrarian Carl (Gemini Flash) failed: Gemini gemini-2.5-flash error 429: \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [PIPELINE] All batches complete. Flattening results.\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5   "error": \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "code": 429,\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "message": "Your project has exceeded its spending cap.",\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5     "status": "RESOURCE_EXHAUSTED"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5   \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 ERROR:app.services.ai_trader: Trader Contrarian Carl (Gemini Flash) failed: Gemini gemini-2.5-flash error 429: \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3   "error": \{\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "code": 429,\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "message": "Your project has exceeded its spending cap.",\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3     "status": "RESOURCE_EXHAUSTED"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3   \}\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/profiles?select=id%2C%20cash_balance "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/positions?select=%2A&quantity=gt.0 "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=NFLX&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=JPM&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=INTC&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=WMT&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true&precision=full "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=NVDA&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=DIS&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=PEP&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=SHOP&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=PFE&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=LLY&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=render-token&vs_currencies=usd&include_24hr_change=true&precision=full "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=arbitrum&vs_currencies=usd&include_24hr_change=true&precision=full "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=MRK&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=MSFT&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=PG&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=UBER&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=ABBV&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=MA&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=polkadot&vs_currencies=usd&include_24hr_change=true&precision=full "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=cardano&vs_currencies=usd&include_24hr_change=true&precision=full "HTTP/1.1 429 Too Many Requests"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=AMD&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=BAC&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=XOM&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=TLT&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=UNH&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=GS&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=BABA&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://finnhub.io/api/v1/quote?symbol=GLD&token=d6q5uo1r01qhcrmj0m50d6q5uo1r01qhcrmj0m5g "HTTP/1.1 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: POST https://reanmnciuazzahffhyry.supabase.co/rest/v1/portfolio_snapshots?on_conflict=user_id%2Csnapshot_date&columns=%22user_id%22%2C%22snapshot_date%22%2C%22total_value%22%2C%22cash_balance%22%2C%22invested_value%22 "HTTP/2 201 Created"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/alert_rules?select=%2A&type=in.%28price_above%2Cprice_below%29&active=eq.True "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb3 INFO:httpx: HTTP Request: GET https://reanmnciuazzahffhyry.supabase.co/rest/v1/alert_rules?select=%2A&type=eq.ai_follow&active=eq.True "HTTP/2 200 OK"\cb1 \
+\pard\pardeftab720\partightenfactor0
+\cf4 \
+\pard\pardeftab720\partightenfactor0
+\cf2 \cb5 [TRADE SYNC] Trading sync completed successfully}
