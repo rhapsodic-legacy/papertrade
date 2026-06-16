@@ -132,13 +132,21 @@ async def _call_model_cloud(model_key: str, system: str, user_msg: str) -> str:
 
 
 def _parse_headline(raw: str) -> str:
-    """Match the daily-commentary storage format: 'HEADLINE:<x>\\n<body>'."""
+    """Normalize to the stored format 'HEADLINE:<x>\\n<body>'.
+
+    Models don't always emit a bare 'HEADLINE:' first line — they wrap it in
+    markdown (**HEADLINE: ...**, ## HEADLINE:) or put a blank line first. Scan
+    the first few lines, strip markdown, and reconstruct the canonical form so
+    the UI's headline display works. If no marker is found, return as-is (the
+    display layer falls back to the first sentence)."""
     text = raw.strip()
-    if text.upper().startswith("HEADLINE:"):
-        parts = text.split("\n", 1)
-        headline = parts[0].split(":", 1)[1].strip()
-        body = parts[1].strip() if len(parts) > 1 else text
-        return f"HEADLINE:{headline}\n{body}"
+    lines = text.split("\n")
+    for i, line in enumerate(lines[:4]):
+        stripped = line.strip().lstrip("*#>- ").strip()
+        if stripped.upper().startswith("HEADLINE:"):
+            headline = stripped.split(":", 1)[1].strip().strip("*").strip()
+            body = "\n".join(lines[i + 1:]).strip()
+            return f"HEADLINE:{headline}\n{body}" if body else f"HEADLINE:{headline}"
     return text
 
 
