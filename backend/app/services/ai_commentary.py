@@ -276,13 +276,16 @@ Write your daily commentary blog post."""
 async def get_commentary(
     commentary_date: str | None = None,
     limit: int = 10,
+    summary_type: str = "daily",
 ) -> list[dict]:
-    """Fetch commentary entries. Defaults to latest date available."""
+    """Fetch commentary entries. Defaults to latest daily entries available.
+    summary_type filters daily vs weekly vs monthly journal roll-ups."""
     db = get_supabase_admin()
 
     query = db.table("ai_commentary").select(
-        "display_name, personality, model, commentary, trades_summary, commentary_date"
-    )
+        "display_name, personality, model, commentary, trades_summary, "
+        "commentary_date, summary_type, period_start, period_end"
+    ).eq("summary_type", summary_type)
 
     if commentary_date:
         query = query.eq("commentary_date", commentary_date).limit(50)
@@ -318,6 +321,9 @@ async def get_commentary(
             "commentary": commentary_text,
             "trades_summary": trades_summary,
             "date": row["commentary_date"],
+            "summary_type": row.get("summary_type", "daily"),
+            "period_start": row.get("period_start"),
+            "period_end": row.get("period_end"),
         })
 
     return entries
@@ -326,13 +332,16 @@ async def get_commentary(
 async def get_trader_commentary(
     user_id: str,
     limit: int = 30,
+    summary_type: str = "daily",
 ) -> list[dict]:
-    """Fetch commentary history for a specific AI trader."""
+    """Fetch commentary history for a specific AI trader, by summary type."""
     db = get_supabase_admin()
     resp = (
         db.table("ai_commentary")
-        .select("display_name, personality, model, commentary, trades_summary, commentary_date")
+        .select("display_name, personality, model, commentary, trades_summary, "
+                "commentary_date, summary_type, period_start, period_end")
         .eq("user_id", user_id)
+        .eq("summary_type", summary_type)
         .order("commentary_date", desc=True)
         .limit(limit)
         .execute()
@@ -363,6 +372,9 @@ async def get_trader_commentary(
             "commentary": commentary_text,
             "trades_summary": trades_summary,
             "date": row["commentary_date"],
+            "summary_type": row.get("summary_type", "daily"),
+            "period_start": row.get("period_start"),
+            "period_end": row.get("period_end"),
         })
 
     return entries

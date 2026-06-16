@@ -401,10 +401,11 @@ class ApiClient {
   }
 
   // AI Commentary
-  async getCommentary(date?: string, limit = 50) {
+  async getCommentary(date?: string, limit = 50, summaryType: "daily" | "weekly" | "monthly" = "daily") {
     const params = new URLSearchParams();
     if (date) params.set("date", date);
     params.set("limit", String(limit));
+    params.set("summary_type", summaryType);
     return this.request<{
       entries: {
         display_name: string;
@@ -419,6 +420,9 @@ class ApiClient {
           price: number;
         }[];
         date: string;
+        summary_type?: string;
+        period_start?: string | null;
+        period_end?: string | null;
       }[];
     }>(`/api/ai/commentary?${params.toString()}`);
   }
@@ -429,7 +433,7 @@ class ApiClient {
     );
   }
 
-  async getTraderCommentary(traderId: string, limit = 30) {
+  async getTraderCommentary(traderId: string, limit = 30, summaryType: "daily" | "weekly" | "monthly" = "daily") {
     return this.request<{
       entries: {
         display_name: string;
@@ -444,8 +448,11 @@ class ApiClient {
           price: number;
         }[];
         date: string;
+        summary_type?: string;
+        period_start?: string | null;
+        period_end?: string | null;
       }[];
-    }>(`/api/ai/traders/${traderId}/commentary?limit=${limit}`);
+    }>(`/api/ai/traders/${traderId}/commentary?limit=${limit}&summary_type=${summaryType}`);
   }
 
   // AI Traders

@@ -23,7 +23,12 @@ interface CommentaryEntry {
   commentary: string;
   trades_summary: TradeSummary[];
   date: string;
+  summary_type?: string;
+  period_start?: string | null;
+  period_end?: string | null;
 }
+
+type SummaryType = "daily" | "weekly" | "monthly";
 
 interface AiTrader {
   id: string;
@@ -76,6 +81,9 @@ export default function InsightsPage() {
   const [loading, setLoading] = useState(true);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
+  // Journal cadence: daily feed vs weekly/monthly roll-ups
+  const [summaryType, setSummaryType] = useState<SummaryType>("daily");
+
   // Trader history mode
   const [viewMode, setViewMode] = useState<ViewMode>("daily");
   const [traders, setTraders] = useState<AiTrader[]>([]);
@@ -110,18 +118,22 @@ export default function InsightsPage() {
     }
   }, [user]);
 
-  // Load commentary for selected date
+  // Load commentary. Daily uses the date picker; weekly/monthly show the most
+  // recent roll-ups (no single date — each entry carries its own period).
   useEffect(() => {
-    if (user && selectedDate && viewMode === "daily") {
-      setLoading(true);
-      setExpandedIndex(null);
-      api
-        .getCommentary(selectedDate, 50)
-        .then((data) => setEntries(data.entries))
-        .catch(console.error)
-        .finally(() => setLoading(false));
-    }
-  }, [user, selectedDate, viewMode]);
+    if (!user || viewMode !== "daily") return;
+    if (summaryType === "daily" && !selectedDate) return;
+    setLoading(true);
+    setExpandedIndex(null);
+    const fetchEntries =
+      summaryType === "daily"
+        ? api.getCommentary(selectedDate!, 50, "daily")
+        : api.getCommentary(undefined, 50, summaryType);
+    fetchEntries
+      .then((data) => setEntries(data.entries))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [user, selectedDate, viewMode, summaryType]);
 
   // Load trader history
   useEffect(() => {
@@ -209,18 +221,38 @@ export default function InsightsPage() {
                 : selectedTrader?.display_name || "Trader History"}
             </h1>
           </div>
-          {viewMode === "daily" && dates.length > 0 && (
-            <select
-              value={selectedDate || ""}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
-            >
-              {dates.map((d) => (
-                <option key={d} value={d}>
-                  {formatDateLabel(d)}
-                </option>
-              ))}
-            </select>
+          {viewMode === "daily" && (
+            <div className="flex items-center gap-2">
+              {/* Daily / Weekly / Monthly cadence toggle */}
+              <div className="flex rounded-lg border border-gray-700 overflow-hidden">
+                {(["daily", "weekly", "monthly"] as SummaryType[]).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setSummaryType(t)}
+                    className={`px-3 py-2 text-sm capitalize transition-colors ${
+                      summaryType === t
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-900 text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              {summaryType === "daily" && dates.length > 0 && (
+                <select
+                  value={selectedDate || ""}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
+                >
+                  {dates.map((d) => (
+                    <option key={d} value={d}>
+                      {formatDateLabel(d)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           )}
         </div>
 

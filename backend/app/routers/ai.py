@@ -179,10 +179,28 @@ async def trigger_commentary():
 async def list_commentary(
     date: str | None = Query(None, description="Filter by date (YYYY-MM-DD)"),
     limit: int = Query(10, ge=1, le=50),
+    summary_type: str = Query("daily", pattern="^(daily|weekly|monthly)$",
+                              description="daily | weekly | monthly journal roll-up"),
 ):
-    """Get AI commentary entries. No auth required."""
-    entries = await get_commentary(commentary_date=date, limit=limit)
+    """Get AI commentary / journal entries. No auth required."""
+    entries = await get_commentary(commentary_date=date, limit=limit, summary_type=summary_type)
     return {"entries": entries}
+
+
+@router.post("/journals/generate")
+async def generate_journals(
+    period_type: str = Query(..., pattern="^(weekly|monthly)$"),
+    end_date: str | None = Query(None, description="A date inside the target period (YYYY-MM-DD); defaults to most recent completed period"),
+    trader_id: str | None = Query(None, description="Restrict to one trader (for tests/backfill)"),
+):
+    """Generate weekly or monthly journal summaries for AI traders. Intended to
+    run on the WEEKEND, separated from the 5PM trading pipeline (these use the
+    same Mistral keys). Cloud-only — never routes to local Gemma."""
+    from datetime import date as _date
+    from app.services.journal_summary import generate_period_summaries
+    parsed = _date.fromisoformat(end_date) if end_date else None
+    result = await generate_period_summaries(period_type, end_date=parsed, only_user_id=trader_id)
+    return result
 
 
 @router.get("/commentary/dates")
@@ -298,9 +316,10 @@ async def list_ai_traders():
 async def get_trader_commentary_history(
     trader_id: str,
     limit: int = Query(30, ge=1, le=90),
+    summary_type: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
 ):
-    """Get full commentary history for a specific AI trader."""
-    entries = await get_trader_commentary(user_id=trader_id, limit=limit)
+    """Get commentary/journal history for a specific AI trader, by summary type."""
+    entries = await get_trader_commentary(user_id=trader_id, limit=limit, summary_type=summary_type)
     return {"entries": entries}
 
 
