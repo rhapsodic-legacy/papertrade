@@ -16,9 +16,9 @@ Paper trading platform with $100k virtual portfolios. 25 AI traders (5 personali
 - **Database:** Supabase (Postgres + Auth)
 - **Hosting:** GCP Cloud Run (backend), Vercel (frontend)
 - **CI/CD:** Cloud Build (backend, manual deploy), Vercel auto-deploy (frontend)
-- **Cron:** GCP Cloud Scheduler (2 jobs) + local launchd (Gemma preprocessing)
+- **Cron:** GCP Cloud Scheduler (2 jobs) + local launchd (intraday conditional orders; Gemma preprocessing **DISABLED** — see `docs/gemma-preprocessing-disabled.md`)
 - **Secrets:** GCP Secret Manager
-- **Local AI:** Ollama + Gemma 4 e2b for free preprocessing (headline clustering, analyst consensus, insider flow, movers narrative)
+- **Local AI:** Ollama + Gemma 4 e2b for free preprocessing (headline clustering, analyst consensus, insider flow, movers narrative) — **DISABLED 2026-06-23** (8GB RAM OOM crashes; `docs/gemma-preprocessing-disabled.md`)
 - **LLMs:** 5 models = Mistral Small, Mistral Medium, Mistral Large, Mistral Large 2 (via Mistral HTTP API, 2 keys x 10 traders) + Llama 4 Maverick (via NVIDIA API, 5 traders), no SDKs. Groq/Gemini configs preserved but no longer used for trading.
 
 ## Architecture
@@ -31,7 +31,12 @@ The daily pipeline is split across Cloud Run and local Mac to leverage free Gemm
 1. **Market Brief** (`market_brief.py`) — fetches stock/crypto quotes, news, fundamentals, technicals, sentiment, insider trades from Finnhub/CoinGecko/Yahoo. Runs Gemma preprocessing if Ollama available (Cloud Run: no; local: yes).
 2. **Reflections** (`reflection.py`) — reviews settled trades (3-5 days old, >3% price move) via Mistral, extracts lessons
 
-**Phase 2 — Local Mac via launchd (5:05 PM ET)**
+**Phase 2 — Local Mac via launchd (5:05 PM ET) — ⚠️ DISABLED 2026-06-23**
+> The local Gemma launchd job is currently **disabled** because loading Gemma 4 e2b
+> (~7GB) repeatedly crashed the 8GB Mac at 5:05 PM. Traders now run on raw brief data
+> (graceful fallback). Scripts are intact; re-enable on better hardware. Full rationale
+> + re-enable steps: `docs/gemma-preprocessing-disabled.md`.
+
 `backend/scripts/local_preprocess.py` — fetches today's brief from Supabase, runs Gemma 4 e2b preprocessing via Ollama, updates the brief in-place. Skips if preprocessing already exists. Four preprocessors run in parallel:
 1. **Headline Clustering** — groups 15-25 headlines into 3-6 themed clusters with sentiment scores
 2. **Analyst Consensus** — condenses per-symbol analyst recs into 1-line narratives
@@ -98,12 +103,17 @@ Two scheduled jobs (timezone: America/New_York):
 2. **papertrade-pipeline-phase3** — 5:10 PM daily → `POST /api/ai/pipeline/trigger?steps=trading,commentary`
 3. **papertrade-snapshots** — 5:30 PM daily → `POST /api/portfolio/snapshots/trigger` (safety net for human portfolios)
 
-### Local launchd Job (Gemma Preprocessing)
-- **Plist:** `~/Library/LaunchAgents/com.papertrade.preprocess.plist`
-- **Script:** `backend/scripts/local_preprocess.py`
-- **Schedule:** 5:05 PM ET daily (between Phase 1 and Phase 3)
+### Local launchd Job (Gemma Preprocessing) — ⚠️ DISABLED 2026-06-23
+- **Status:** Disabled — plist renamed to `com.papertrade.gemma-preprocess.plist.disabled`
+  and booted out of launchd. Gemma 4 e2b (~7GB) kept OOM-crashing the 8GB Mac at 5:05 PM.
+  Traders run on raw brief data. **Re-enable on 16GB+ hardware** per
+  `docs/gemma-preprocessing-disabled.md` (full rationale + step-by-step restore).
+- **Plist:** `~/Library/LaunchAgents/com.papertrade.gemma-preprocess.plist` (currently `.disabled`)
+- **Script:** `backend/scripts/local_preprocess.py` (intact — only the launchd trigger was removed)
+- **Schedule (when active):** 5:05 PM local daily (between Phase 1 and Phase 3)
 - **Requires:** Ollama running locally with `gemma4:e2b` model pulled
 - **Config:** `OLLAMA_BASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` in `.env`
+- **Note:** `com.papertrade.intraday` (conditional-order checks, no Gemma) remains active.
 
 ### GCP Secret Manager
 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `FINNHUB_API_KEY`, `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`, `NVIDIA_API_KEY`
