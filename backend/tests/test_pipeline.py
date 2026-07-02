@@ -876,3 +876,30 @@ class TestRunTraderIntegration:
 
         assert result["status"] == "error"
         assert "DB connection lost" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# 10. Cross-module name binding (regression)
+# ---------------------------------------------------------------------------
+
+class TestResolverNameBinding:
+    """Regression for the 2026-06-13 resolver sweep: ai_commentary.py gained a
+    call to resolve_personality_key() but not the import. py_compile and module
+    import both pass on that bug — it only NameErrors at call time, which
+    silently killed the nightly commentary phase for 18 days (zero daily
+    journals 6/14-7/01). Assert the name is bound in every module that calls
+    it at module scope. (analytics.py imports it function-locally and is
+    covered by its own usage paths.)"""
+
+    def test_resolve_personality_key_bound_in_all_consumers(self):
+        import app.services.ai_commentary as ai_commentary
+        import app.services.backtest as backtest
+        import app.services.journal_summary as journal_summary
+        import app.routers.ai as ai_router
+        import app.services.ai_trader as ai_trader
+
+        for mod in (ai_commentary, backtest, journal_summary, ai_router, ai_trader):
+            assert hasattr(mod, "resolve_personality_key"), (
+                f"{mod.__name__} calls resolve_personality_key but does not "
+                f"bind it — nightly phase using it will NameError at runtime"
+            )

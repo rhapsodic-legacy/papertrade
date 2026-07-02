@@ -8,6 +8,7 @@ from app.services.ai_trader import (
     MODELS,
     CUSTOM_TRADER_MODEL,
     CUSTOM_RISK_PRESETS,
+    resolve_personality_key,
     _call_gemini,
     _call_mistral,
     _call_groq,
