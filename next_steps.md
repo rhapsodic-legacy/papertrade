@@ -2,6 +2,16 @@
 
 Date written: 2026-06-14
 
+> **STATUS UPDATE (2026-07-03):** Features 1+2 SHIPPED (commit 765986c).
+> One deliberate deviation from this spec: the weak-exit metric does NOT use
+> the LLM `outcome_score` — it joins round-trip loss-sells against
+> trade_reflections' deterministic price fields (trade_price vs outcome_price),
+> keeping the LLM out of the measurement loop entirely. Baseline at ship:
+> most traders run 75-100% weak-exit rates (YOLO Bot ML2 8/9, Vanilla ML2 4/4).
+> Watch whether these fall over the coming weeks; measure per the section below.
+> Feature 3 (swarm) remains unbuilt — start only after 1+2 have been observed
+> across several runs, per the build order.
+
 This document specs three related features aimed at one problem: traders give
 back gains on weak exits (attribution shows momentum-driven sells winning ~40%
 of the time and optimizer-driven sells running negative). The approach is
