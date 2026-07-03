@@ -1184,6 +1184,20 @@ def _format_trade_context(ctx: dict) -> str:
     streak = trade_stats.get("streak", {})
 
     takeaway_parts = []
+
+    # Weak exits lead the takeaway — it's the costliest pattern in the fleet
+    # (selling a local low, then watching the rebound). Data only; the exit
+    # decision stays the trader's.
+    weak = trade_stats.get("weak_exits")
+    if weak and (weak["recent_weak"] >= 2 or (weak["weak_count"] >= 3 and weak["weak_rate"] >= 40)):
+        worst = weak.get("worst")
+        worst_str = f" (worst: {worst['symbol']} rebounded {worst['rebound_pct']:+.1f}% after you sold)" if worst else ""
+        takeaway_parts.append(
+            f"{weak['recent_weak']} of your last {weak['recent_measured']} loss-exits were WEAK — "
+            f"you sold into weakness and the price rebounded within days{worst_str}. "
+            f"NO WEAK EXITS: sell on a broken thesis, a hit stop/target, or a concentration trim — never just because price is down"
+        )
+
     if sector_ranked:
         best_s, best_v = sector_ranked[0]
         takeaway_parts.append(
@@ -1219,6 +1233,12 @@ def _format_trade_context(ctx: dict) -> str:
 
     lines.append(f"  Overall: {total_sells} round-trips, {win_rate:.0f}% win rate")
     lines.append(f"  Avg winner: +{avg_win:.1f}% | Avg loser: {avg_loss:.1f}%")
+    if weak:
+        lines.append(
+            f"  Weak exits: {weak['weak_count']} of {weak['measured_loss_sells']} measured loss-sells "
+            f"({weak['weak_rate']:.0f}%) rebounded ≥3% within days of your sale"
+            + (f", avg rebound {weak['avg_rebound_pct']:+.1f}%" if weak["weak_count"] else "")
+        )
 
     # By asset type
     if len(by_type) > 1:

@@ -653,6 +653,14 @@ If you have 3+ positions, at least 1 of your trades today MUST be a sell. \
 Portfolios that only buy become bloated and unmanageable. Active management means \
 actively trimming, rotating, and rebalancing — not just accumulating.
 
+NO WEAK EXITS. A weak exit is selling into weakness only to watch the price rebound \
+days later — it is the single most expensive mistake this fleet makes, and yours are \
+counted in YOUR HISTORICAL TRACK RECORD below. "Price is down" is not a sell trigger; \
+it is the definition of selling low. Every sell must name its trigger: a broken thesis \
+(specific evidence, not fear), a hit stop-loss or take-profit, a concentration trim, or \
+a stale position. If a position is merely down and your thesis is intact, the sell \
+column is not where it belongs.
+
 ## Rules
 - You can buy or sell stocks and crypto from the supported list only.
 - You cannot spend more cash than you have.
@@ -1086,6 +1094,8 @@ def _compute_trade_context(db, user_id: str) -> dict | None:
                         "pnl_pct": pnl_pct,
                         "hold_days": hold_days,
                         "sector": STOCK_SECTORS.get(sym, "Other") if lot_type != "crypto" else "Crypto",
+                        "sell_price": price,
+                        "sell_date": trade_date,
                     })
                 remaining -= take
                 if take >= lot_qty:
@@ -1157,7 +1167,80 @@ def _compute_trade_context(db, user_id: str) -> dict | None:
             break
     result["streak"] = {"direction": streak_dir, "length": streak_len}
 
+    # Weak exits: loss-sells where the price REBOUNDED shortly after — the
+    # trader sold a local low. Rebound data comes from trade_reflections'
+    # deterministic price fields (trade_price vs outcome_price ~3-5 days
+    # later; price_change_pct > 0 means it rose after the sale). This is
+    # DATA the trader sees, never a rule — exits stay the LLM's call.
+    result["weak_exits"] = _compute_weak_exits(db, user_id, round_trips)
+
     return result
+
+
+def _compute_weak_exits(db, user_id: str, round_trips: list[dict]) -> dict | None:
+    """Join this trader's loss-sells against reflection rebound data.
+
+    A weak exit = a sell that (a) realized a loss and (b) was followed by a
+    >= +3% price rebound within the reflection settle window (~3-5 days).
+    Take-profits that kept running are NOT counted — selling a winner early
+    is a different behavior than dumping a position at a local low.
+    Returns None when fewer than 3 loss-sells have rebound data (too little
+    to say anything a trader should act on).
+    """
+    loss_sells = [r for r in round_trips if r["pnl_pct"] <= 0]
+    if not loss_sells:
+        return None
+
+    refl = (
+        db.table("trade_reflections")
+        .select("symbol, trade_price, price_change_pct")
+        .eq("user_id", user_id)
+        .eq("side", "sell")
+        .order("reflected_at", desc=True)
+        .limit(120)
+        .execute()
+    )
+    if not refl.data:
+        return None
+
+    # Lookup by (symbol, sell price) — price ties a reflection row back to
+    # the specific sell transaction without needing the trade id here.
+    rebound_by_key: dict[tuple, float] = {}
+    for r in refl.data:
+        try:
+            key = (r["symbol"], round(float(r["trade_price"]), 4))
+        except (TypeError, ValueError):
+            continue
+        rebound_by_key.setdefault(key, float(r["price_change_pct"] or 0))
+
+    measured = []
+    for rt in loss_sells:
+        key = (rt["symbol"], round(float(rt["sell_price"]), 4))
+        if key in rebound_by_key:
+            measured.append({
+                "symbol": rt["symbol"],
+                "pnl_pct": rt["pnl_pct"],
+                "rebound_pct": rebound_by_key[key],
+                "sell_date": rt.get("sell_date", ""),
+            })
+
+    if len(measured) < 3:
+        return None
+
+    weak = [m for m in measured if m["rebound_pct"] >= 3.0]
+    recent = sorted(measured, key=lambda m: m["sell_date"])[-10:]
+    recent_weak = [m for m in recent if m["rebound_pct"] >= 3.0]
+    worst = max(weak, key=lambda m: m["rebound_pct"]) if weak else None
+
+    return {
+        "measured_loss_sells": len(measured),
+        "weak_count": len(weak),
+        "weak_rate": round(len(weak) / len(measured) * 100, 1),
+        "recent_measured": len(recent),
+        "recent_weak": len(recent_weak),
+        "avg_rebound_pct": round(sum(m["rebound_pct"] for m in weak) / len(weak), 1) if weak else 0,
+        "worst": {"symbol": worst["symbol"], "rebound_pct": round(worst["rebound_pct"], 1)} if worst else None,
+    }
 
 
 def _compute_dynamic_risk(db, user_id: str) -> dict | None:

@@ -7,6 +7,7 @@ Single Groq batch call reviews all trades from 3-5 days ago where price moved >3
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import date, timedelta
@@ -265,32 +266,54 @@ async def run_reflections() -> dict:
         print("[REFLECTION] No trades with significant price movement")
         return {"status": "ok", "reflected_count": 0}
 
-    # LLM call (local Gemma if available, falls back to Mistral)
+    # LLM calls (local Gemma if available, falls back to Mistral).
+    # Chunked: one giant batch overflows max_tokens and truncates mid-JSON,
+    # losing EVERYTHING — on 2026-07-02 a 21-day backlog produced
+    # "Unterminated string" every night and wedged the loop permanently
+    # (each failure left the window just as overloaded for the next run).
+    # Per-chunk parsing isolates failures to ~12 trades instead of the batch.
+    from app.services.llm import call_llm
+
+    CHUNK_SIZE = 12
+    chunks = [enriched[i:i + CHUNK_SIZE] for i in range(0, len(enriched), CHUNK_SIZE)]
+    all_reflections: list[dict] = []
+    failed_chunks = 0
+
+    for idx, chunk in enumerate(chunks):
+        try:
+            if idx:
+                await asyncio.sleep(3)  # pace the shared Mistral key
+            prompt = _build_reflection_prompt(chunk)
+            raw = await call_llm(
+                system=REFLECTION_SYSTEM,
+                user_msg=prompt,
+                tier="local",
+                temperature=0.3,
+                max_tokens=4096,
+            )
+            all_reflections.extend(_parse_reflections(raw, chunk))
+        except Exception as e:
+            failed_chunks += 1
+            print(f"[REFLECTION] Chunk {idx + 1}/{len(chunks)} failed: {e}")
+
     try:
-        from app.services.llm import call_llm
-
-        prompt = _build_reflection_prompt(enriched)
-        raw = await call_llm(
-            system=REFLECTION_SYSTEM,
-            user_msg=prompt,
-            tier="local",
-            temperature=0.3,
-            max_tokens=4096,
-        )
-
-        reflections = _parse_reflections(raw, enriched)
-        _persist_reflections(reflections)
-        print(f"[REFLECTION] Generated {len(reflections)} reflections from {len(enriched)} trades")
-
-        return {
-            "status": "ok",
-            "reflected_count": len(reflections),
-            "trades_reviewed": len(enriched),
-        }
-
+        _persist_reflections(all_reflections)
     except Exception as e:
-        print(f"[REFLECTION] Failed: {e}")
+        print(f"[REFLECTION] Persist failed: {e}")
         return {"status": "error", "reason": str(e)[:200]}
+
+    print(
+        f"[REFLECTION] Generated {len(all_reflections)} reflections from "
+        f"{len(enriched)} trades ({failed_chunks}/{len(chunks)} chunks failed)"
+    )
+    if failed_chunks == len(chunks) and chunks:
+        return {"status": "error", "reason": "all reflection chunks failed"}
+    return {
+        "status": "ok",
+        "reflected_count": len(all_reflections),
+        "trades_reviewed": len(enriched),
+        "failed_chunks": failed_chunks,
+    }
 
 
 _SUBSTANTIVE_RULE_PATTERN = re.compile(

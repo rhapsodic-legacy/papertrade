@@ -903,3 +903,143 @@ class TestResolverNameBinding:
                 f"{mod.__name__} calls resolve_personality_key but does not "
                 f"bind it — nightly phase using it will NameError at runtime"
             )
+
+
+# ---------------------------------------------------------------------------
+# 11. Weak-exit metric (Feature 1) + reflection chunking
+# ---------------------------------------------------------------------------
+
+class TestWeakExits:
+    """Weak exit = a loss-sell followed by a >=3% rebound within the
+    reflection settle window. Data-only feedback — never a rule."""
+
+    def _mock_db(self, refl_rows):
+        db = MagicMock()
+        result = MagicMock()
+        result.data = refl_rows
+        (db.table.return_value.select.return_value.eq.return_value
+           .eq.return_value.order.return_value.limit.return_value
+           .execute.return_value) = result
+        return db
+
+    def _rt(self, sym, pnl, price, date="2026-06-20"):
+        return {"symbol": sym, "asset_type": "stock", "pnl_pct": pnl,
+                "hold_days": 5, "sector": "Technology",
+                "sell_price": price, "sell_date": date}
+
+    def test_counts_weak_exits(self):
+        from app.services.ai_trader import _compute_weak_exits
+        round_trips = [
+            self._rt("AAPL", -4.0, 180.0),   # loss, rebounded +5 -> weak
+            self._rt("MSFT", -2.0, 400.0),   # loss, kept falling -> good exit
+            self._rt("NVDA", -6.0, 130.0),   # loss, rebounded +8 -> weak
+            self._rt("JNJ", +3.0, 150.0),    # winner -> not a loss-sell
+        ]
+        refl = [
+            {"symbol": "AAPL", "trade_price": 180.0, "price_change_pct": 5.0},
+            {"symbol": "MSFT", "trade_price": 400.0, "price_change_pct": -4.0},
+            {"symbol": "NVDA", "trade_price": 130.0, "price_change_pct": 8.0},
+        ]
+        out = _compute_weak_exits(self._mock_db(refl), "u1", round_trips)
+        assert out is not None
+        assert out["measured_loss_sells"] == 3
+        assert out["weak_count"] == 2
+        assert out["weak_rate"] == round(2 / 3 * 100, 1)
+        assert out["worst"]["symbol"] == "NVDA"
+
+    def test_requires_min_measured(self):
+        from app.services.ai_trader import _compute_weak_exits
+        round_trips = [self._rt("AAPL", -4.0, 180.0)]
+        refl = [{"symbol": "AAPL", "trade_price": 180.0, "price_change_pct": 5.0}]
+        assert _compute_weak_exits(self._mock_db(refl), "u1", round_trips) is None
+
+    def test_key_pattern_renders_weak_exits(self):
+        from app.services.rag_toolkit import _format_trade_context
+        stats = {
+            "total_round_trips": 12, "win_rate": 50.0,
+            "avg_win_pct": 5.0, "avg_loss_pct": -4.0,
+            "by_asset_type": {}, "by_hold_period": {}, "by_sector": {},
+            "streak": {"direction": "losing", "length": 1},
+            "weak_exits": {
+                "measured_loss_sells": 6, "weak_count": 4, "weak_rate": 66.7,
+                "recent_measured": 6, "recent_weak": 4, "avg_rebound_pct": 5.2,
+                "worst": {"symbol": "SOL", "rebound_pct": 9.1},
+            },
+        }
+        out = _format_trade_context({"trade_context": stats})
+        assert "KEY PATTERN" in out
+        assert "WEAK" in out
+        assert "NO WEAK EXITS" in out
+        assert "SOL" in out
+        assert "Weak exits: 4 of 6" in out
+
+    def test_no_weak_line_when_absent(self):
+        from app.services.rag_toolkit import _format_trade_context
+        stats = {
+            "total_round_trips": 5, "win_rate": 60.0,
+            "avg_win_pct": 4.0, "avg_loss_pct": -3.0,
+            "by_asset_type": {}, "by_hold_period": {}, "by_sector": {},
+            "streak": {"direction": "winning", "length": 2},
+            "weak_exits": None,
+        }
+        out = _format_trade_context({"trade_context": stats})
+        assert "WEAK" not in out
+
+
+class TestReflectionChunking:
+    """Regression: one giant reflection batch overflowed max_tokens and
+    truncated mid-JSON, losing the whole batch nightly (2026-07-02).
+    Chunking must isolate a failed chunk instead of losing everything."""
+
+    def _settled(self, n):
+        return [{
+            "trade_id": f"t{i}", "user_id": f"u{i % 5}",
+            "display_name": "Vanilla (Mistral Large)", "symbol": "AAPL",
+            "asset_type": "stock", "side": "sell", "price": 100.0,
+            "reasoning": "test", "created_at": "2026-06-29T21:00:00",
+        } for i in range(n)]
+
+    @staticmethod
+    def _valid_response(count):
+        return json.dumps({"reflections": [
+            {"id": i, "outcome_score": 0.5, "reflection": "r", "lesson": "l"}
+            for i in range(count)
+        ]})
+
+    @pytest.mark.asyncio
+    async def test_failed_chunk_is_isolated(self):
+        from app.services import reflection as refl_mod
+
+        persisted = []
+        # 25 trades -> chunks of 12, 12, 1
+        responses = [
+            Exception("Unterminated string (truncated)"),
+            self._valid_response(12),
+            self._valid_response(1),
+        ]
+
+        async def fake_call_llm(**kwargs):
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        async def fake_quote(sym, atype):
+            return {"price": 110.0}  # +10% move, passes 3% threshold
+
+        settings = MagicMock()
+        settings.mistral_api_key = "k"
+
+        with patch.object(refl_mod, "get_settings", return_value=settings), \
+             patch.object(refl_mod, "get_supabase_admin", return_value=MagicMock()), \
+             patch.object(refl_mod, "_get_settled_trades", return_value=self._settled(25)), \
+             patch.object(refl_mod, "get_quote", side_effect=fake_quote), \
+             patch.object(refl_mod, "_persist_reflections", side_effect=lambda r: persisted.extend(r)), \
+             patch("app.services.llm.call_llm", side_effect=fake_call_llm), \
+             patch.object(refl_mod.asyncio, "sleep", new_callable=AsyncMock):
+            result = await refl_mod.run_reflections()
+
+        assert result["status"] == "ok"
+        assert result["failed_chunks"] == 1
+        assert result["reflected_count"] == 13
+        assert len(persisted) == 13
