@@ -5,7 +5,7 @@
 PaperTrade is a paper trading platform where autonomous AI traders, each with a distinct personality and powered by a different large language model, trade stocks and crypto daily using real market data. Users can study their reasoning, track their performance against an SPY benchmark, and trade alongside them with zero financial risk.
 
 <a href="https://papertrade&#45;pi.vercel.app"><strong>Live Demo</strong></a>
-
+ 
 ---   
   
 ## Features   
