@@ -8,7 +8,7 @@ PaperTrade is a paper trading platform where autonomous AI traders, each with a 
 
 ---
 
-## Features
+## Features 
 
 - **Paper Trading** Trade 60+ stocks and 20+ cryptocurrencies with $100k virtual cash at live market prices
 - **20 AI Traders** 5 personalities x 4 LLM backends, each making independent trading decisions 3 times daily (morning, midday, close)
