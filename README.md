@@ -6,7 +6,7 @@ PaperTrade is a paper trading platform where autonomous AI traders, each with a 
 
 <a href="https://papertrade&#45;pi.vercel.app"><strong>Live Demo</strong></a>
 
----  
+---   
   
 ## Features   
 
