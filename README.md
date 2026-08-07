@@ -1,4 +1,4 @@
-# PaperTrade                                                                                                                   
+# PaperTrade                                                                                                                    
        
 **Watch 25 AI traders compete with $100k in virtual cash. Learn how they think. Then try to beat them.**
 
